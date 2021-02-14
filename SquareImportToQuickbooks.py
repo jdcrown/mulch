@@ -5,7 +5,7 @@ import os
 import logging
 from dataclasses import dataclass
 from dateutil.parser import parse
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 sales_receipts = []
 troop91 = False
 QB_BEARER_TOKEN = os.environ.get('BEARER_TOKEN')
@@ -146,6 +146,7 @@ def process_order(sr):
           "domain": "QBO",
           "Balance": 0,
           "CustomerRef": {
+            "name": "",
             "value": "6"
           },
           "CustomerMemo": {
@@ -177,21 +178,26 @@ def process_order(sr):
           ],
           "PaymentMethodRef": {
               "value": lookup_payment_method('square')
-          }
-        }
+          },
+          "CustomerMemo": {
+              "value": sr.memo
+          },
+    }
 
 
     customer_response = requests.request("POST", query_url, headers=headers, data=payload)
     customer_record = json.loads(customer_response.text)
-    logging.debug("CustomerRecord: {}".format(customer_record))
+    logging.info("CustomerRecord: {}".format(customer_record))
     if customer_record.get('QueryResponse') \
             and customer_record['QueryResponse']['Customer'] \
             and len(customer_record['QueryResponse']['Customer']) == 1:
         #we have found a customer
         customer_id = customer_record['QueryResponse']['Customer'][0]['Id']
+        customer_name = customer_record['QueryResponse']['Customer'][0]['DisplayName']
         logging.debug("Customer id: {}".format(customer_id))
 
         sr_body['CustomerRef']['value'] = customer_id
+        sr_body['CustomerRef']['name'] = customer_name
         sr_body['Line'][0]['Amount'] = sr.total_price
         if 'donate' in sr.product_name.lower():
             sr_body['Line'][0]['SalesItemLineDetail']['Qty'] = '1'
@@ -238,12 +244,15 @@ def extract_item(sr,quantity,item_name,variation):
 
     spread_pattern = re.compile('spreading')
     donation_pattern = re.compile('donate')
+    brown_pattern = re.compile('brown|hardwood')
+    black_pattern = re.compile('black')
+    red_pattern = re.compile('red')
 
-    if 'black' in item_name:
+    if black_pattern.match(item_name):
         sr.product_name = "Black Mulch" + tier
-    elif item_name in ["brown", "hardwood"]:
+    elif brown_pattern.match(item_name):
         sr.product_name = "Brown Mulch" + tier
-    elif item_name in ["red"]:
+    elif red_pattern.match(item_name):
         sr.product_name = "Red Mulch" + tier
     elif spread_pattern.match(item_name):
         if 'March 20' in variation:
@@ -307,11 +316,14 @@ all_orders = json.loads(response.text)
 for order in all_orders['orders']:
 
     created_on = parse(order.get('created_at')).date()
+
     #check only from a certain time forward
-    #if created_on >= parse('2020-11-01').date() and created_on < parse('2021-02-14').date():
+    if created_on >= parse('2020-11-01').date() and created_on < parse('2021-02-14').date():
     #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
-    if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
-        logging.debug("Order: {}".format(order))
+    #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
+    #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
+
+        logging.info("Order: {}".format(order))
         if 'line_items' in order:
             #line_items = order['line_items']
             for item in order['line_items']:
@@ -325,6 +337,9 @@ for order in all_orders['orders']:
                         logging.debug("Processing Line Item: {}".format(item))
                         # get customer for order if we have a customer id
                         if bool(order.get('customer_id', None)):
+                            logging.info(
+                                "Processing Square customer id: [{}], order id:[{}]".format(order['customer_id'],
+                                                                                            order['id']))
                             customer_id = order['customer_id']
                             tenders_id = order['tenders'][0]['id']
                             payment_url = SQUARE_HOST + "/v2/payments/" + tenders_id
@@ -344,10 +359,17 @@ for order in all_orders['orders']:
                             sr.customer_last = customer['family_name']
                             sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
                             sr.customer_phone = customer.get('phone_number', None)
+                            if order['fulfillments'][0].get('shipment_details') and order['fulfillments'][0]['shipment_details'].get('shipping_note'):
+                                sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
                         else:  # otherwise get the customer from the order itself (customer not registered)
+                            logging.info(
+                                "Processing Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
+
                             logging.debug("getting from fulfillments")
                             sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
+                            sr.customer_last = sr.customer_name.split(' ')[-1]
+                            sr.customer_first = sr.customer_name.split(' ')[0]
                             sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
                                 'address_line_1']
                             sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
@@ -358,6 +380,7 @@ for order in all_orders['orders']:
                                 'postal_code']
                             sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
                             sr.customer_phone = order['fulfillments'][0]['shipment_details']['recipient']['phone_number']
+                            sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
 
                         #print("matched: {}".format(item0))
