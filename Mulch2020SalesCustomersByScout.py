@@ -8,24 +8,24 @@ import inspect
 from intuitlib.enums import Scopes
 
 #SANDBOX
-# CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
-# CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
-# COMPANY_ID='123146273978409'
-# REFRESH_TOKEN='AB11590594008hlMfVhaedDsriGmwO20xIql94TzCPf4YxZtys'
+CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
+CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
+COMPANY_ID='123146273978409'
+REFRESH_TOKEN='AB11622062637N8n6ikb1TRgzLH34uwNSjsCrtROgz5U1bipw1'
 
 #PROD T581
-CLIENT_ID= 'Q0qYrX2LrOfiA6vjGNzANtYXha9G8qnI03yX6cNqziCWHmrZld'
-CLIENT_SECRET = 'YzeWqqEy03pnD1BlzZHWCCKyqIauRIXOclKCpCNm'
-COMPANY_ID='193514844769229'
-REFRESH_TOKEN='AB11592284379LUtspT5VkMyANMBdD3CjLkdMoH5WGdwW2C7V1'
+# CLIENT_ID= 'Q0qYrX2LrOfiA6vjGNzANtYXha9G8qnI03yX6cNqziCWHmrZld'
+# CLIENT_SECRET = 'YzeWqqEy03pnD1BlzZHWCCKyqIauRIXOclKCpCNm'
+# COMPANY_ID='193514844769229'
+# REFRESH_TOKEN='AB11592284379LUtspT5VkMyANMBdD3CjLkdMoH5WGdwW2C7V1'
 
 
 print("authorizing...")
 auth_client = AuthClient(
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
-        environment='prod',
-        redirect_uri='http://localhost:5000/callback',
+        environment='sandbox',
+        redirect_uri='https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl',
     )
 url = auth_client.get_authorization_url(scopes=[Scopes.ACCOUNTING])
 print("finished authorizing...")
@@ -41,6 +41,7 @@ print('finished connecting')
 
 sales = SalesReceipt.query(f"SELECT * FROM salesreceipt where MetaData.CreateTime > '2019-12-01' MAXRESULTS 1000", qb=client)
 cnt = 0
+
 print(f"Scout, Customer, Phone, Email")
 for sale in sales:
     cnt += 1

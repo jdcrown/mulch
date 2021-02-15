@@ -26,7 +26,7 @@ print("authorizing...")
 auth_client = AuthClient(
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
-        environment='prod',
+        environment='sandbox',
         redirect_uri='http://localhost:5000/callback',
     )
 url = auth_client.get_authorization_url(scopes=[Scopes.ACCOUNTING])
