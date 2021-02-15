@@ -9,17 +9,19 @@ import inspect
 
 from intuitlib.enums import Scopes
 
-#SANDBOX
-# CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
-# CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
-# COMPANY_ID='123146273978409'
-# REFRESH_TOKEN='AB11590594008hlMfVhaedDsriGmwO20xIql94TzCPf4YxZtys'
+#[sandbox]
+CLIENT_ID= <clientid>       #more comments
+CLIENT_SECRET = <secret>
+COMPANY_ID='123146273978409'
+REFRESH_TOKEN=
+SQUARE_BEARER_TOKEN=<token>
 
-#PROD T581
-CLIENT_ID= 'Q0qYrX2LrOfiA6vjGNzANtYXha9G8qnI03yX6cNqziCWHmrZld'
-CLIENT_SECRET = 'YzeWqqEy03pnD1BlzZHWCCKyqIauRIXOclKCpCNm'
+#[production]
+CLIENT_ID= <clientid>
+CLIENT_SECRET = <secret>
 COMPANY_ID='193514844769229'
-REFRESH_TOKEN='AB11592444273cKBuCWbrdDd6aMGCayh2GGC81jGnXuHvgOdpQ'
+REFRESH_TOKEN=<token>
+SQUARE_BEARER_TOKEN=<token>
 
 
 print("authorizing...")

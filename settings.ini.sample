@@ -7,7 +7,7 @@ start_date = 2020-11-13T00:00
 end_date = 2021-02-15T23:59
 
 [sandbox]
-CLIENT_ID= <clientid>       #more comments
+CLIENT_ID= <clientid>
 CLIENT_SECRET = <secret>
 COMPANY_ID='123146273978409'
 REFRESH_TOKEN=
