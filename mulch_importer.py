@@ -3,6 +3,7 @@ import json
 import re
 import os
 import logging
+import configparser
 from dataclasses import dataclass
 from dateutil.parser import parse
 from intuitlib.client import AuthClient
@@ -15,29 +16,50 @@ from quickbooks.objects.salesreceipt import SalesReceipt
 from quickbooks.exceptions import QuickbooksException
 from prompter import prompt, yesno
 
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+
+
 sales_receipts = []
-troop91 = False
+
 qb_client = None #client
+config = configparser.ConfigParser()
+config.read('settings.ini')
 
 #SANDBOX
-ENVIRONMENT = 'sandbox'
-CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
-CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
-COMPANY_ID='123146273978409'
-REFRESH_TOKEN='AB11622074159zHImYprY0syjYESrIGfbUGR4TiuOjucHyPJIo'
+# ENVIRONMENT = 'sandbox'
+# CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
+# CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
+# COMPANY_ID='123146273978409'
+# REFRESH_TOKEN='AB11622074159zHImYprY0syjYESrIGfbUGR4TiuOjucHyPJIo'
 
-#PROD T581
-# ENVIRONMENT = 'production'
-# CLIENT_ID= 'Q0qYrX2LrOfiA6vjGNzANtYXha9G8qnI03yX6cNqziCWHmrZld'
-# CLIENT_SECRET = 'YzeWqqEy03pnD1BlzZHWCCKyqIauRIXOclKCpCNm'
-# COMPANY_ID='193514844769229'
-# REFRESH_TOKEN='AB11592284379LUtspT5VkMyANMBdD3CjLkdMoH5WGdwW2C7V1'
+
+ENVIRONMENT = config['DEFAULT']['ENVIRONMENT']
+if ENVIRONMENT == 'production':
+    print("RUNNING IN PRODUCTION")
+    CLIENT_ID = config['production']['CLIENT_ID']
+    CLIENT_SECRET = config['production']['CLIENT_SECRET']
+    COMPANY_ID = config['production']['COMPANY_ID']
+    REFRESH_TOKEN = config['production']['REFRESH_TOKEN']
+else:
+    print("RUNNING IN SANDBOX")
+    CLIENT_ID = config['sandbox']['CLIENT_ID']
+    CLIENT_SECRET = config['sandbox']['CLIENT_SECRET']
+    COMPANY_ID = config['sandbox']['COMPANY_ID']
+    REFRESH_TOKEN = config['sandbox']['REFRESH_TOKEN']
+
+
+DEFAULT_DONATION_PRODUCT = config['DEFAULT']['DefaultDonationProduct']
+AUTO_CREATE_CUSTOMERS = config['DEFAULT'].getboolean('AutoCreateCustomers')
+
+logging_level = config['DEFAULT']['Logging']
+if logging_level == 'DEBUG':
+    logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
+else:
+    logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
 
 #QB_BEARER_TOKEN = None #os.environ.get('BEARER_TOKEN')
 
-PROCESSING_START_DATETIME = '2020-11-01T01:00'
-PROCESSING_END_DATETIME = '2021-02-15T01:00'
+PROCESSING_START_DATETIME = config['DEFAULT']['start_date']
+PROCESSING_END_DATETIME = config['DEFAULT']['end_date']
 
 
 SQUARE_HOST = "https://connect.squareup.com"
@@ -139,6 +161,8 @@ def lookup_product(product_name):
     if item_count == 1:
         items = Item.where("Name = '" + product_name + "'", qb=qb_client)
         return items[0].Id
+    else:
+        logging.error("Product name: [{}] not found. Please add this product to quickbook before this record can be added".format(product_name))
 
 def process_order(sr):
     #Get the sales receipt
@@ -187,14 +211,18 @@ def process_order(sr):
     }
 
     customers_count = Customer.count("Active=true and DisplayName LIKE '%" + sr.customer_last + "'", qb=qb_client)
+
     if customers_count == 0:
         # create a new customer?
-        answer = yesno("Customer [{}] not found. Create the customer?".format(sr.customer_name))
-        if answer:
-            logging.warning("Creating the customer [{}] in quickbooks.".format(sr.customer_name))
-            customer = create_customer(sr)
-            if customer is not None:
-                customers_count = 1
+        if AUTO_CREATE_CUSTOMERS:
+            answer = yesno("Customer [{}] not found. Create the customer?".format(sr.customer_name))
+            if answer:
+                logging.warning("Creating the customer [{}] in quickbooks.".format(sr.customer_name))
+                customer = create_customer(sr)
+                if customer is not None:
+                    customers_count = 1
+        else:
+            logging.warning("Customer [{}] not found. Not creating customer due to settings.".format(sr.customer_name))
 
     if customers_count == 1:
         #we have found a customer
@@ -234,7 +262,7 @@ def process_order(sr):
             try:
                 sales_receipt.save(qb_client)
                 logging.debug("SentBody: {}".format(json.dumps(sr_body)))
-                logging.info("Successful entry of SalesReceipt: [{}] into quickbooks. OrderId:[{}], Item:[{}], Qty:[{}], Total:[{}]".format(sr.customer_name,sales_receipt.Id,sr.product_name,sr.product_qty,sr.total_price))
+                logging.info("Successful entry of SalesReceipt: [{}] into quickbooks. OrderId:[{}], Item:[{}], Qty:[{}], Total:[{}]".format(sr.customer_last,sales_receipt.Id,sr.product_name,sr.product_qty,sr.total_price))
             except QuickbooksException as e:
                 logging.error("An error saving the sales_receipt: {}".format(e.detail))
     elif customers_count > 1:
@@ -285,10 +313,7 @@ def extract_item(sr,quantity,item_name,variation):
             sr.product_name = "Spreading 3-27"
         sr.product_qty = quantity
     elif donation_pattern.match(item_name):
-        if troop91:
-            sr.product_name = 'Donation - T91'
-        else:
-            sr.product_name = 'Donation - T581'
+        sr.product_name = DEFAULT_DONATION_PRODUCT
     return sr
 
 @dataclass
@@ -331,10 +356,11 @@ def main():
         created_on = parse(order.get('created_at')).date()
 
         #check only from a certain time forward
-        #if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
-        if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
+        if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
+        #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
         #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
         #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
+        #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
 
             logging.info("Order: {}".format(order))
             if 'line_items' in order:
