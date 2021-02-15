@@ -1,5 +1,4 @@
 [DEFAULT]
-DryRun = yes
 AutoCreateCustomers = yes
 DefaultDonationProduct = Donation - T581
 Logging = INFO
@@ -11,10 +10,12 @@ end_date = 2021-02-15T23:59
 CLIENT_ID= <clientid>       #more comments
 CLIENT_SECRET = <secret>
 COMPANY_ID='123146273978409'
-REFRESH_TOKEN=<token>
+REFRESH_TOKEN=
+SQUARE_BEARER_TOKEN=<token>
 
 [production]
 CLIENT_ID= <clientid>
 CLIENT_SECRET = <secret>
 COMPANY_ID='193514844769229'
 REFRESH_TOKEN=<token>
+SQUARE_BEARER_TOKEN=<token>

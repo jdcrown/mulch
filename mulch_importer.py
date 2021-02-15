@@ -24,14 +24,6 @@ qb_client = None #client
 config = configparser.ConfigParser()
 config.read('settings.ini')
 
-#SANDBOX
-# ENVIRONMENT = 'sandbox'
-# CLIENT_ID= 'Q0gi4IpcoE322BxbjIgtDEZhGnabOsnfWuTzgLL4UA768Zf559'
-# CLIENT_SECRET = 'b3sDUGRyO18GcmgqDt2VDsH50ZePDhP8t2XyZ6jT'
-# COMPANY_ID='123146273978409'
-# REFRESH_TOKEN='AB11622074159zHImYprY0syjYESrIGfbUGR4TiuOjucHyPJIo'
-
-
 ENVIRONMENT = config['DEFAULT']['ENVIRONMENT']
 if ENVIRONMENT == 'production':
     print("RUNNING IN PRODUCTION")
@@ -39,13 +31,14 @@ if ENVIRONMENT == 'production':
     CLIENT_SECRET = config['production']['CLIENT_SECRET']
     COMPANY_ID = config['production']['COMPANY_ID']
     REFRESH_TOKEN = config['production']['REFRESH_TOKEN']
+    SQUARE_BEARER_TOKEN = config['production']['SQUARE_BEARER_TOKEN']
 else:
     print("RUNNING IN SANDBOX")
     CLIENT_ID = config['sandbox']['CLIENT_ID']
     CLIENT_SECRET = config['sandbox']['CLIENT_SECRET']
     COMPANY_ID = config['sandbox']['COMPANY_ID']
     REFRESH_TOKEN = config['sandbox']['REFRESH_TOKEN']
-
+    SQUARE_BEARER_TOKEN = config['production']['SQUARE_BEARER_TOKEN']
 
 DEFAULT_DONATION_PRODUCT = config['DEFAULT']['DefaultDonationProduct']
 AUTO_CREATE_CUSTOMERS = config['DEFAULT'].getboolean('AutoCreateCustomers')
@@ -63,9 +56,9 @@ PROCESSING_END_DATETIME = config['DEFAULT']['end_date']
 
 
 SQUARE_HOST = "https://connect.squareup.com"
-SQUARE_BEARER_TOKEN = 'EAAAEVKtyYvqSGmrYQAX63-Tq2PtozZC7uZisIEuvkximfBDuY8G71akI8dnIm_5'
 
-spread_pattern = re.compile('spreading')
+#These are regular expressions used to find matches in the square description so that we can get the description correct for quickbooks
+spread_pattern = re.compile('spreading|spread')
 donation_pattern = re.compile('donate|donation')
 brown_pattern = re.compile('brown|hardwood')
 black_pattern = re.compile('black')

@@ -1,21 +1,3 @@
-#to build it and share dependencies
+##To build it and share dependencies
 
-conda env export --from-history > environment.yml
-
-#to create an environment
-
-Install Miniconda
-conda env create -n mynewone -f environment.yml
-conda activate mynewone
-
-#Configure it
-
-Get the key and secret from quickbooks
-
-Set the environment
-
-Get the key from square
-
-#Run it
-
-python mulch_importer.py
+conda env export --no-builds | findstr -v "prefix" > environment.yml
