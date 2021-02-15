@@ -29,7 +29,9 @@ The tool will automatically add a new customer if the **last name** is not found
     
     `conda --version`
     
-4. create and activate your new environment
+4. cd (change directory) to the directory where your project files are. You should see the environment.yml file there.
+    
+5. create and activate your new environment
     
     `conda env create -n mulch -f environment.yml`
 
