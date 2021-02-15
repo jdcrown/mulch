@@ -16,7 +16,7 @@ The tool will automatically add a new customer if the **last name** is not found
 
 ### Customer moves/changes (TODO)
 
-* If the customer is found, then the tool will compare the address in the database by <house number> <first token> in the address. If this is a discrepancy, it prompts the user to make the change or not.
+* If the customer is found, then the tool will compare the address in the database by `<house number> <first token>` in the address. If this is a discrepancy, it prompts the user to make the change or not.
 * If the phone number is a mismatch and there is a new one, it just replaces it and moves the old one to the 2nd phone field in the customer record.
 * If the email is a mismatch and there is a new one, then it just replaces it wihtout prompting and moves it to the 2nd email field in the customer record.
 
