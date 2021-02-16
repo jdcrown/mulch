@@ -32,10 +32,10 @@ The tool will automatically add a new customer if the **last name** is not found
 4. cd (change directory) to the directory where your project files are. You should see the environment.yml file there.
     
 5. create and activate your new environment
- 
-    `conda env create -f environment.yml`
+    
+    `conda env create -n mulch -f environment.yml`
 
-    `conda activate python38`
+    `conda activate mulch`
 
 ### Configure it
 
@@ -43,6 +43,8 @@ Copy the `settings.ini.sample` file to a new one called `settings.ini`
 
 #### Get the key and secret from quickbooks
 1. Go to https://developer.intuit.com/app/developer/playground and click on *T581 Mulch Sandbox*
+
+    *Note: If you don't have a developer account contact jcrown@gmail.com for one that is linked to T581 Mulch.*
 2. Copy the `client id` and `client secret` into the settings.ini file under the SANDBOX section
 3. On the webpage, click all check boxes, then click `Get Authorization Code`, then click `Get Tokens`
 4. Scroll all the way down to the section **Refresh access token** and copy the `Refresh Token` into your `settings.ini` file in the same section.
@@ -55,9 +57,10 @@ Repeat 1-4 for the **production** secrets, but we will test this working with *s
 
 This app will only read data from production. It will not write to it.
 
-1. Go to your square developer site: https://developer.squareup.com/apps
-2. Click the plus box to *create an application*. Name the application.
-3. Click open and choose `production` at the top. Copy the **production access token** and add this to the **settings.ini** file
+1. Sign in to your square account first.
+2. Go to your square developer site: https://developer.squareup.com/apps
+3. Click the plus box to *create an application*. Name the application.
+4. Click open and choose `production` at the top. Copy the **production access token** and add this to the **settings.ini** file
 
 #### Configure remaining default items in your settings.ini file
 * AutoCreateCustomers = yes; This will autocreate customers that are missing. But the software will prompt first.

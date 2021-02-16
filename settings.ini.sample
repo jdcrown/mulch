@@ -3,19 +3,26 @@ AutoCreateCustomers = yes
 DefaultDonationProduct = Donation - T581
 Logging = INFO
 environment = sandbox
+brown_keys=hardwood|brown
+red_keys=red
+black_keys=black
+donation_keys=donate|donation
+spreading_keys=spread|spreading
 start_date = 2020-11-13T00:00
 end_date = 2021-02-15T23:59
 
 [sandbox]
 CLIENT_ID= <clientid>
 CLIENT_SECRET = <secret>
-COMPANY_ID='123146273978409'
+COMPANY_ID=123146273978409
 REFRESH_TOKEN=<token>
 SQUARE_BEARER_TOKEN=<token>
+SQUARE_LOCATION_ID=<location id from square>
 
 [production]
 CLIENT_ID= <clientid>
 CLIENT_SECRET = <secret>
-COMPANY_ID='193514844769229'
+COMPANY_ID=193514844769229
 REFRESH_TOKEN=<token>
 SQUARE_BEARER_TOKEN=<token>
+SQUARE_LOCATION_ID=<location id from square>

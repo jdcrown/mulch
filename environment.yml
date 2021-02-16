@@ -19,18 +19,24 @@ dependencies:
     - async-timeout==3.0.1
     - attrs==20.3.0
     - authclient==1.0
+    - cachecontrol==0.12.6
     - chardet==3.0.4
     - dataclasses==0.6
+    - deprecation==2.1.0
     - ecdsa==0.14.1
     - enum-compat==0.0.3
     - future==0.18.2
     - idna==2.10
     - intuit-oauth==1.2.3
+    - jsonpickle==0.9.6
+    - msgpack==1.0.2
     - multidict==5.1.0
     - oauthlib==3.1.0
+    - packaging==20.9
     - prompter==0.3.10
     - pyasn1==0.4.8
     - pycparser==2.18
+    - pyparsing==2.4.7
     - python-dateutil==2.8.1
     - python-jose==3.2.0
     - python-quickbooks==0.8.4
@@ -40,6 +46,7 @@ dependencies:
     - rsa==4.7
     - simplejson==3.17.2
     - six==1.15.0
+    - squareup==8.1.0.20210121
     - typing-extensions==3.7.4.3
     - urllib3==1.26.3
     - yarl==1.6.3

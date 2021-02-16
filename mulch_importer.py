@@ -1,49 +1,57 @@
-import requests
 import json
 import re
-import os
 import logging
 import configparser
 from dataclasses import dataclass
 from dateutil.parser import parse
 from intuitlib.client import AuthClient
+from intuitlib.exceptions import AuthClientError
 from quickbooks import QuickBooks
 from quickbooks.objects.customer import Customer
 from quickbooks.objects.item import Item
 from quickbooks.objects.paymentmethod import PaymentMethod
-from datetime import time
 from quickbooks.objects.salesreceipt import SalesReceipt
 from quickbooks.exceptions import QuickbooksException
+from quickbooks.exceptions import AuthorizationException
 from prompter import prompt, yesno
-
-
+from square.client import Client
 
 sales_receipts = []
 
 qb_client = None #client
 config = configparser.ConfigParser()
 config.read('settings.ini')
-
-ENVIRONMENT = config['DEFAULT']['ENVIRONMENT']
+default = config['DEFAULT']
+ENVIRONMENT = config['DEFAULT'].get('ENVIRONMENT', 'sandbox') #default to sandbox
 if ENVIRONMENT == 'production':
     print("RUNNING IN PRODUCTION")
-    CLIENT_ID = config['production']['CLIENT_ID']
-    CLIENT_SECRET = config['production']['CLIENT_SECRET']
-    COMPANY_ID = config['production']['COMPANY_ID']
-    REFRESH_TOKEN = config['production']['REFRESH_TOKEN']
-    SQUARE_BEARER_TOKEN = config['production']['SQUARE_BEARER_TOKEN']
+    PRODUCTION = config['production']
+    CLIENT_ID = PRODUCTION.get('CLIENT_ID')
+    CLIENT_SECRET = PRODUCTION.get('CLIENT_SECRET')
+    COMPANY_ID = PRODUCTION.get('COMPANY_ID')
+    REFRESH_TOKEN = PRODUCTION.get('REFRESH_TOKEN')
+    SQUARE_BEARER_TOKEN = PRODUCTION.get('SQUARE_BEARER_TOKEN')
+    SQUARE_LOCATION_ID = PRODUCTION.get('SQUARE_LOCATION_ID')
 else:
     print("RUNNING IN SANDBOX")
-    CLIENT_ID = config['sandbox']['CLIENT_ID']
-    CLIENT_SECRET = config['sandbox']['CLIENT_SECRET']
-    COMPANY_ID = config['sandbox']['COMPANY_ID']
-    REFRESH_TOKEN = config['sandbox']['REFRESH_TOKEN']
-    SQUARE_BEARER_TOKEN = config['production']['SQUARE_BEARER_TOKEN']
+    SANDBOX = config['sandbox']
+    CLIENT_ID = SANDBOX.get('CLIENT_ID')
+    CLIENT_SECRET = SANDBOX.get('CLIENT_SECRET')
+    COMPANY_ID = SANDBOX.get('COMPANY_ID')
+    REFRESH_TOKEN = SANDBOX.get('REFRESH_TOKEN')
+    SQUARE_BEARER_TOKEN = SANDBOX.get('SQUARE_BEARER_TOKEN')
+    SQUARE_LOCATION_ID = SANDBOX.get('SQUARE_LOCATION_ID')
 
-DEFAULT_DONATION_PRODUCT = config['DEFAULT']['DefaultDonationProduct']
-AUTO_CREATE_CUSTOMERS = config['DEFAULT'].getboolean('AutoCreateCustomers')
+DEFAULT_DONATION_PRODUCT = default.get('DefaultDonationProduct', 'Donation - T581')
+AUTO_CREATE_CUSTOMERS = default.getboolean('AutoCreateCustomers')
+BLACK_KEYS = default.get('black_keys', 'black')
+BROWN_KEYS = default.get('brown_keys', 'brown|hardwood')
+RED_KEYS = default.get('red_keys', 'red')
+SPREAD_KEYS = default.get('spreading_keys', 'spread|spreading')
+DONATION_KEYS = default.get('donation_keys', 'donate|donation')
+SEARCH_KEYS = "|".join([BROWN_KEYS, RED_KEYS, SPREAD_KEYS, DONATION_KEYS, BLACK_KEYS])
 
-logging_level = config['DEFAULT']['Logging']
+logging_level = default.get('Logging', 'INFO')
 if logging_level == 'DEBUG':
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 else:
@@ -58,14 +66,14 @@ PROCESSING_END_DATETIME = config['DEFAULT']['end_date']
 SQUARE_HOST = "https://connect.squareup.com"
 
 #These are regular expressions used to find matches in the square description so that we can get the description correct for quickbooks
-spread_pattern = re.compile('spreading|spread')
-donation_pattern = re.compile('donate|donation')
-brown_pattern = re.compile('brown|hardwood')
-black_pattern = re.compile('black')
-red_pattern = re.compile('red')
+# spread_pattern = re.compile('spreading|spread')
+# donation_pattern = re.compile('donate|donation')
+# brown_pattern = re.compile('brown|hardwood')
+# black_pattern = re.compile('black')
+# red_pattern = re.compile('red')
 
 def authenticate_to_quickbooks():
-    print("authorizing...")
+    print("authorizing to Quickbooks...")
     auth_client = AuthClient(
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
@@ -74,16 +82,22 @@ def authenticate_to_quickbooks():
     )
     #url = auth_client.get_authorization_url(scopes=[Scopes.ACCOUNTING])
 
-    print("finished authorizing...")
+    print("finished authorizing to Quickbooks...")
+    try:
+        client = QuickBooks(
+            auth_client=auth_client,
+            refresh_token=REFRESH_TOKEN,
+            company_id=COMPANY_ID,
+        )
+        print('finished connecting to Quickbooks...')
+        return client
+    except AuthClientError as e:
+        logging.error("Cannot connect to quickbooks: Error [{}]".format(e.content))
 
-    client = QuickBooks(
-        auth_client=auth_client,
-        refresh_token=REFRESH_TOKEN,
-        company_id=COMPANY_ID,
-    )
-    print('finished connecting')
-    return client
 
+#def update_customer_info(sr):
+    #This updates the quickbooks customer. It will check to see if the address, phone or email has changes
+    #and if it has, then it prompts to update the customer record for address, but automatically moves the
 
 def square_money_to_decimal(price):
     return "{}.{}".format(str(price)[0:-2], str(price)[-2:])
@@ -157,7 +171,7 @@ def lookup_product(product_name):
     else:
         logging.error("Product name: [{}] not found. Please add this product to quickbook before this record can be added".format(product_name))
 
-def process_order(sr):
+def create_order(sr):
     #Get the sales receipt
 
     sales_receipt = SalesReceipt()
@@ -224,6 +238,8 @@ def process_order(sr):
         customer_name = customers[0].DisplayName
         logging.debug("Customer id: {}".format(customer_id))
 
+       # update_customer_info(sr)
+
         sr_body['CustomerRef']['value'] = customer_id
         sr_body['CustomerRef']['name'] = customer_name
         sr_body['Line'][0]['Amount'] = sr.total_price
@@ -282,13 +298,13 @@ def extract_item(sr,quantity,item_name,variation):
 
 
 
-    if black_pattern.match(item_name):
+    if re.findall(BLACK_KEYS,item_name.lower()):
         sr.product_name = "Black Mulch" + tier
-    elif brown_pattern.match(item_name):
+    elif re.findall(BROWN_KEYS,item_name.lower()):
         sr.product_name = "Brown Mulch" + tier
-    elif red_pattern.match(item_name):
+    elif re.findall(RED_KEYS,item_name.lower()):
         sr.product_name = "Red Mulch" + tier
-    elif spread_pattern.match(item_name):
+    elif re.findall(SPREAD_KEYS,item_name.lower()):
         if 'March 20' in variation:
             sr.product_name = "Spreading 3-20"
         elif 'March 21' in variation:
@@ -305,7 +321,7 @@ def extract_item(sr,quantity,item_name,variation):
             #Peg it to the middle of the week so we have more time to work on the spreading for the else orders
             sr.product_name = "Spreading 3-27"
         sr.product_qty = quantity
-    elif donation_pattern.match(item_name):
+    elif re.findall(DONATION_KEYS,item_name.lower()):
         sr.product_name = DEFAULT_DONATION_PRODUCT
     return sr
 
@@ -330,22 +346,45 @@ class MulchSalesReceipt:
     total_price: float = None
 
 def main():
-    url = SQUARE_HOST + "/v2/orders/search"
-    payload="{\n  \"location_ids\": [\n  \t\"EXMEGPYWHET3P\"\n  \t],\n  \t \"query\": {\n      \"filter\": {\n      \t\"customer_ids\": [\n      \t\t\"{{customer_id}}\"\n      \t\t]\n      }\n    }\n}"
-    headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + SQUARE_BEARER_TOKEN
-    }
+    try:
+        client = Client(
+            square_version='2021-01-21',
+            access_token=SQUARE_BEARER_TOKEN,
+            environment='production', )
+    except Exception as e:
+        logging.error("Cannot connect to square : {}".format(e.message))
 
-    #get transaction
-    response = requests.request("POST", url, headers=headers, data=payload)
+    body = {}
+    body['location_ids'] = [SQUARE_LOCATION_ID]    # Just using one
+    body['limit'] = 200
+    body['query'] = {}
+    body['query']['filter'] = {}
+    body['query']['filter']['state_filter'] = {}
+    body['query']['filter']['state_filter']['states'] = ['OPEN']
+    body['query']['filter']['date_time_filter'] = {}
+    body['query']['filter']['date_time_filter']['created_at'] = {}
+    body['query']['filter']['date_time_filter']['created_at']['start_at'] = PROCESSING_START_DATETIME
+    body['query']['filter']['date_time_filter']['created_at']['end_at'] = PROCESSING_END_DATETIME
+    body['query']['filter']['fulfillment_filter'] = {}
+    body['query']['filter']['fulfillment_filter']['fulfillment_types'] = ['SHIPMENT']
+    body['query']['filter']['fulfillment_filter']['fulfillment_states'] = ['PROPOSED']
+    body['return_entries'] = True
+    body['query']['sort'] = {}
+    body['query']['sort']['sort_field'] = 'CREATED_AT'
+    body['query']['sort']['sort_order'] = 'ASC'
+    body['query']['filter']['customer_filter'] = {}
+    orders_api = client.orders
+    orders_raw = orders_api.search_orders(body)
 
+    if orders_raw.is_success():
+        print(orders_raw.body)
+    elif orders_raw.is_error():
+        print(orders_raw.errors)
 
-    key_list = ['black', 'red', 'hardwood', 'brown', 'spread', 'donate', 'donation']
-    all_orders = json.loads(response.text)
-
-    for order in all_orders['orders']:
-
+    all_orders = orders_raw.body.get('order_entries')
+    if all_orders: print("Found [{}] orders in square to process.".format(len(all_orders)))
+    for order_cursor in all_orders:
+        order = orders_api.retrieve_order(order_cursor['order_id']).body['order']
         created_on = parse(order.get('created_at')).date()
 
         #check only from a certain time forward
@@ -355,17 +394,16 @@ def main():
         #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
         #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
 
-            logging.info("Order: {}".format(order))
+            logging.info("Processing Order: {}".format(order))
+
             if 'line_items' in order:
-                #line_items = order['line_items']
                 for item in order['line_items']:
                     sr = MulchSalesReceipt()
                     logging.debug("Processing Line Item: {}".format(item))
                     if 'name' in item:
                         #print(item0)
-                        reg_list = map(re.compile, key_list)
-
-                        if any(regex.match(item['name'].lower()) for regex in reg_list):
+                        if re.findall(SEARCH_KEYS, item['name'].lower()):
+                            process_order = True
                             logging.debug("Processing Line Item: {}".format(item))
                             item_name = item['name'].lower()
                             item_quantity = int(item['quantity'])
@@ -376,24 +414,41 @@ def main():
                                     "Processing Square customer id: [{}], order id:[{}], details: [Item:{}, variation:{}, quantity:{}]".format(order['customer_id'],
                                                                                                 order['id'], item_name, item_variation, item_quantity))
                                 customer_id = order['customer_id']
-                                tenders_id = order['tenders'][0]['id']
-                                payment_url = SQUARE_HOST + "/v2/payments/" + tenders_id
-                                payment_raw = requests.request("GET", payment_url, headers=headers, data=payload)
-                                payment = json.loads(payment_raw.text)['payment']
-                                logging.debug("Payment Raw: {}".format(payment))
-                                sr.customer_street = payment['shipping_address']['address_line_1']
-                                sr.customer_state = payment['shipping_address']['administrative_district_level_1']
-                                sr.customer_city = payment['shipping_address']['locality']
-                                sr.customer_zip = payment['shipping_address']['postal_code']
-                                sr.customer_email = payment['buyer_email_address']
-                                customer_url = SQUARE_HOST + "/v2/customers/" + customer_id
-                                customer_raw = requests.request("GET", customer_url, headers=headers, data=payload)
-                                customer = json.loads(customer_raw.text)['customer']
-                                logging.debug("Customer Response: {}".format(customer))
-                                sr.customer_first = format(customer['given_name'])
-                                sr.customer_last = customer['family_name']
-                                sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
-                                sr.customer_phone = customer.get('phone_number', None)
+                                payment_id = order['tenders'][0]['id']
+                                try:
+                                    payments_api = client.payments
+                                    payment_raw = payments_api.get_payment(payment_id)
+                                    if payment_raw.is_success():
+                                        payment = payment_raw.body['payment']
+                                        logging.debug("Payment Raw: {}".format(payment))
+                                        sr.customer_street = payment['shipping_address']['address_line_1']
+                                        sr.customer_state = payment['shipping_address']['administrative_district_level_1']
+                                        sr.customer_city = payment['shipping_address']['locality']
+                                        sr.customer_zip = payment['shipping_address']['postal_code']
+                                        sr.customer_email = payment['buyer_email_address']
+                                    else:
+                                        logging.error(
+                                            "Cannot find square payment for payment_id: [{}]".format(payment_id))
+                                        process_order = False
+                                except Exception as e:
+                                    logging.error("Error finding square payment for payment_id: [{}], msg:[{}]".format(payment_id, e.message))
+                                    process_order = False
+                                try:
+                                    customers_api = client.customers
+                                    customer_raw = customers_api.retrieve_customer(customer_id)
+                                    if customer_raw.is_success():
+                                        customer = customer_raw.body['customer']
+                                        logging.debug("Customer Response: {}".format(customer))
+                                        sr.customer_first = format(customer['given_name'])
+                                        sr.customer_last = customer['family_name']
+                                        sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
+                                        sr.customer_phone = customer.get('phone_number', None)
+                                    else:
+                                        logging.error("Cannot process square customer id: [{}]".format(customer_id))
+                                        process_order = False
+                                except Exception as e:
+                                    logging.error("Error processing square customer id: [{}], msg: {}".format(customer_id, e.message))
+                                    process_order = False
                                 if order['fulfillments'][0].get('shipment_details') and order['fulfillments'][0]['shipment_details'].get('shipping_note'):
                                     sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
@@ -424,13 +479,18 @@ def main():
                             # item_variation = item['variation_name']
 
                             #now we have a clean line item for mulch. Build the object out for importing into quickbooks
-
-                            sr = extract_item(sr, item_quantity, item_name, item_variation)
-                            sr.date = order['created_at']
-                            sr.product_price = square_money_to_decimal(item['base_price_money']['amount'])
-                            sr.total_price = square_money_to_decimal(item['total_money']['amount'])
-                            process_order(sr)
-                            logging.debug(sr)
+                            if process_order:
+                                sr = extract_item(sr, item_quantity, item_name, item_variation)
+                                sr.date = order['created_at']
+                                sr.product_price = square_money_to_decimal(item['base_price_money']['amount'])
+                                sr.total_price = square_money_to_decimal(item['total_money']['amount'])
+                                create_order(sr)
+                                logging.debug(sr)
+                            else:
+                                logging.error("Cannot process Order for orderid [{}]. Either the customer or the payment cannot be found in square...skipping".format(order['id']))
 
 qb_client = authenticate_to_quickbooks()
-main()
+if qb_client:
+    main()
+else:
+    print("Cannot connect to quickbooks. Check your keys and tokens")
