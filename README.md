@@ -60,15 +60,22 @@ This app will only read data from production. It will not write to it.
 1. Sign in to your square account first.
 2. Go to your square developer site: https://developer.squareup.com/apps
 3. Click the plus box to *create an application*. Name the application.
-4. Click open and choose `production` at the top. Copy the **production access token** and add this to the **settings.ini** file
+4. Click open and choose **`production`** at the top. Copy the **production access token** and add this to the **settings.ini** file
+5. On the left menu, click **locations** . Copy the `location ID` to your `settings.ini` file.
 
 #### Configure remaining default items in your settings.ini file
-* AutoCreateCustomers = yes; This will autocreate customers that are missing. But the software will prompt first.
+* AutoCreateCustomers = yes; This will auto-create customers that are missing. But the software will prompt first.
 * DefaultDonationProduct = Donation - T581
 * Logging = INFO; Set this to DEBUG if you want verbos logging
 * environment = sandbox; use this to enable a dry run to the sandbox quickbooks account first. Highly recommended. 
 * start_date = 2020-11-13T00:00; start date that it will begin to process orders from square.
 * end_date = 2021-02-15T23:59; end date it will process orders from square.
+* Keys : These are filters that are set to look for the product types in square.
+  * brown_keys=hardwood|brown
+  * red_keys=red
+  * black_keys=black
+  * donation_keys=donate|donation
+  * spreading_keys=spread|spreading
 
 ---
 
