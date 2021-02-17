@@ -308,9 +308,6 @@ def create_order(sr):
     #amys = Customer.filter(start_position=1, max_results=25, Active=True, FamilyName="Smith", qb=qb_client)
     #amys = Customer.query("SELECT * from Customers where FamilyName='Smith'", qb=qb_client)
     #amys = qb_client.query("select count(*) from Customer Where Active=true and DisplayName LIKE '%Smith'")
-    if sr.customer_last.lower() == 'smith':
-        print("stopping on smith")
-
 
     #customer_street_number = sr.customer_street.split(' ')[0]
     query = "Active=true and DisplayName = '" + sr.customer_name.lower() + "'"
