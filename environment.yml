@@ -5,6 +5,7 @@ dependencies:
   - ca-certificates=2021.1.19
   - certifi=2020.12.5
   - openssl=1.1.1i
+  - phonenumbers=8.12.17
   - pip=20.3.3
   - python=3.8.5
   - setuptools=52.0.0

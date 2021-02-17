@@ -19,7 +19,6 @@ from quickbooks.exceptions import ValidationException
 from prompter import prompt, yesno
 from square.client import Client
 import phonenumbers
-import copy
 
 sales_receipts = []
 
@@ -313,8 +312,12 @@ def create_order(sr):
         print("stopping on smith")
 
 
-
-    customers_count = Customer.count("Active=true and DisplayName LIKE '%" + sr.customer_last.lower() + "'", qb=qb_client)
+    #customer_street_number = sr.customer_street.split(' ')[0]
+    query = "Active=true and DisplayName = '" + sr.customer_name.lower() + "'"
+    try:
+        customers_count = Customer.count(query, qb=qb_client)
+    except ValidationException as ve:
+        print(ve.detail)
 
     if customers_count == 0:
         # create a new customer?
@@ -486,8 +489,8 @@ def main():
         created_on = parse(order.get('created_at')).date()
 
         #check only from a certain time forward
-        #if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
-        if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
+        if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
+        #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
         #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
         #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
         #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
@@ -540,7 +543,10 @@ def main():
                                         sr.customer_first = format(customer['given_name'])
                                         sr.customer_last = customer['family_name']
                                         sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
-                                        sr.customer_phone = customer.get('phone_number', None)
+                                        if customer.get('phone_number', None) is not None:
+                                            formatted_phone = phonenumbers.format_number(phonenumbers.parse(customer.get('phone_number', None), "US"),
+                                                                                       phonenumbers.PhoneNumberFormat.NATIONAL)
+                                            sr.customer_phone = formatted_phone
                                     else:
                                         logging.error("Cannot process square customer id: [{}]".format(customer_id))
                                         process_order = False
