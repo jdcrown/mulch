@@ -7,14 +7,19 @@ from dateutil.parser import parse
 from intuitlib.client import AuthClient
 from intuitlib.exceptions import AuthClientError
 from quickbooks import QuickBooks
+from quickbooks.objects.base import PhoneNumber
+from quickbooks.objects.base import Address
 from quickbooks.objects.customer import Customer
+from quickbooks.objects.base import EmailAddress
 from quickbooks.objects.item import Item
 from quickbooks.objects.paymentmethod import PaymentMethod
 from quickbooks.objects.salesreceipt import SalesReceipt
 from quickbooks.exceptions import QuickbooksException
-from quickbooks.exceptions import AuthorizationException
+from quickbooks.exceptions import ValidationException
 from prompter import prompt, yesno
 from square.client import Client
+import phonenumbers
+import copy
 
 sales_receipts = []
 
@@ -94,11 +99,6 @@ def authenticate_to_quickbooks():
     except AuthClientError as e:
         logging.error("Cannot connect to quickbooks: Error [{}]".format(e.content))
 
-
-#def update_customer_info(sr):
-    #This updates the quickbooks customer. It will check to see if the address, phone or email has changes
-    #and if it has, then it prompts to update the customer record for address, but automatically moves the
-
 def square_money_to_decimal(price):
     return "{}.{}".format(str(price)[0:-2], str(price)[-2:])
 
@@ -161,6 +161,96 @@ def lookup_payment_method(payment_name):
         logging.error("Please add the 'Sqaure' payment method to quickbooks before running this tool.")
         exit(0)
 
+def check_and_update_customer_information(cr, customer_id):
+    # If the customer is found, then the tool will compare the address in the database by `<house number> <first token>` in the address. If this is a discrepancy, it prompts the user to make the change or not.
+    # If the phone number is a mismatch and there is a new one, it just replaces it and moves the old one to the 2nd phone field in the customer record.
+    # If the email is a mismatch and there is a new one, then it just replaces it wihtout prompting and moves it to the 2nd email field in the customer record.
+
+    customer = Customer.get(customer_id, qb=qb_client)
+
+    #phone number update
+    phone_new = cr.customer_phone
+
+    primary_phone_obj = customer.PrimaryPhone
+    #print(type(customer.PrimaryPhone))
+    if phone_new is not None and primary_phone_obj is not None:
+        phone_orig = customer.PrimaryPhone.FreeFormNumber
+        formatted_new = phonenumbers.format_number(phonenumbers.parse(phone_new, "US"),
+                                                   phonenumbers.PhoneNumberFormat.NATIONAL)
+        formatted_orig = phonenumbers.format_number(phonenumbers.parse(phone_orig, "US"),
+                                                   phonenumbers.PhoneNumberFormat.NATIONAL)
+
+        if formatted_new != formatted_orig:
+            #update the phone field in the customer
+            logging.warning("The database customer phone number:[{}] is different from the order: [{}]. Updating...".format(formatted_orig, formatted_new))
+            orig_phone_struct = PhoneNumber()
+            orig_phone_struct.FreeFormNumber = formatted_orig
+            customer.AlternatePhone = orig_phone_struct
+            customer.PrimaryPhone.FreeFormNumber = formatted_new
+            customer.save(qb_client)
+    else:
+        if phone_new is not None:
+            formatted_new = phonenumbers.format_number(phonenumbers.parse(phone_new, "US"),
+                                                       phonenumbers.PhoneNumberFormat.NATIONAL)
+            logging.warning("The database customer phone number is empty from the order: [{}]. Updating...".format(formatted_new))
+            new_phone_struct = PhoneNumber()
+            new_phone_struct.FreeFormNumber = formatted_new
+            customer.PrimaryPhone = new_phone_struct
+            customer.save(qb_client)
+
+    #Customer email update
+    email_new = cr.customer_email
+    email_orig_obj = customer.PrimaryEmailAddr
+    if email_new is not None and email_orig_obj is not None:
+        email_orig = customer.PrimaryEmailAddr.Address
+
+        if email_orig != email_new:
+            #update the phone field in the customer
+            logging.warning("The database customer email:[{}] is different from the order: [{}]. Updating...".format(email_orig, email_new))
+            customer.PrimaryEmailAddr.Address = email_new
+            customer.save(qb_client)
+    else:
+        if email_new is not None:
+            logging.warning(
+                "The database customer email address is empty from the order: [{}]. Updating...".format(email_new))
+            new_email_struct = EmailAddress()
+            new_email_struct.Address = email_new
+            customer.PrimaryEmailAddr = new_email_struct
+            customer.save(qb_client)
+
+    #Customer address update
+    address_line1_new = cr.customer_street
+    address_line1_old_obj = customer.BillAddr
+    if address_line1_new is not None and address_line1_old_obj is not None:
+        address_line1_old = customer.BillAddr.Line1
+        if address_line1_new != address_line1_old:
+            #update the phone field in the customer
+            logging.warning("The database billing address:[{}] is different from the order: [{}]. Updating...".format(address_line1_old, address_line1_new))
+            answer = yesno("Update the address from [{}] to [{}] for customer: [{}]".format(address_line1_old, address_line1_new, customer.DisplayName))
+            if answer:
+                customer.BillAddr.Line1 = address_line1_new
+                customer.BillAddr.City = cr.customer_city
+                customer.BillAddr.CountrySubDivisionCode = cr.customer_state
+                customer.BillAddr.PostalCode = cr.customer_zip
+                customer.ShipAddr = customer.BillAddr
+                try:
+                    customer.save(qb_client)
+                except ValidationException as ve:
+                    print(ve.detail)
+    else:
+        if address_line1_new is not None:
+            logging.warning(
+                "The database customer billing address is empty from the order: [{}]. Updating...".format(address_line1_new))
+            new_address_struct = Address()
+            new_address_struct.Line1 = address_line1_new
+            new_address_struct.City = cr.customer_city
+            new_address_struct.CountrySubDivisionCode = cr.customer_state
+            new_address_struct.PostalCode = cr.customer_zip
+
+            customer.BillAddr = customer.ShipAddr = new_address_struct
+            customer.save(qb_client)
+
+
 def lookup_product(product_name):
     #Get the Item
     #items = Item.all(qb=qb_client)
@@ -216,8 +306,15 @@ def create_order(sr):
               "value": sr.memo
           },
     }
+    #amys = Customer.filter(start_position=1, max_results=25, Active=True, FamilyName="Smith", qb=qb_client)
+    #amys = Customer.query("SELECT * from Customers where FamilyName='Smith'", qb=qb_client)
+    #amys = qb_client.query("select count(*) from Customer Where Active=true and DisplayName LIKE '%Smith'")
+    if sr.customer_last.lower() == 'smith':
+        print("stopping on smith")
 
-    customers_count = Customer.count("Active=true and DisplayName LIKE '%" + sr.customer_last + "'", qb=qb_client)
+
+
+    customers_count = Customer.count("Active=true and DisplayName LIKE '%" + sr.customer_last.lower() + "'", qb=qb_client)
 
     if customers_count == 0:
         # create a new customer?
@@ -233,12 +330,13 @@ def create_order(sr):
 
     if customers_count == 1:
         #we have found a customer
+
         customers = Customer.where("Active=true and DisplayName LIKE '%" + sr.customer_last + "'", qb=qb_client)
         customer_id = customers[0].Id
         customer_name = customers[0].DisplayName
         logging.debug("Customer id: {}".format(customer_id))
 
-       # update_customer_info(sr)
+        check_and_update_customer_information(sr, customer_id)
 
         sr_body['CustomerRef']['value'] = customer_id
         sr_body['CustomerRef']['name'] = customer_name
@@ -388,8 +486,8 @@ def main():
         created_on = parse(order.get('created_at')).date()
 
         #check only from a certain time forward
-        if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
-        #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
+        #if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
+        if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
         #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
         #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
         #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
