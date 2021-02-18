@@ -331,7 +331,7 @@ def create_order(sr):
     if customers_count == 1:
         #we have found a customer
 
-        customers = Customer.where("Active=true and DisplayName LIKE '%" + sr.customer_last + "'", qb=qb_client)
+        customers = Customer.where("Active=true and DisplayName LIKE '%" + sr.customer_name.lower() + "'", qb=qb_client)
         customer_id = customers[0].Id
         customer_name = customers[0].DisplayName
         logging.debug("Customer id: {}".format(customer_id))
@@ -358,8 +358,13 @@ def create_order(sr):
         duplicate = False
         srs = SalesReceipt.filter(CustomerRef = customer_id, qb=qb_client)
         for asr in srs:
+            #get item ref info
+            item = Item.get(asr.Line[0].SalesItemLineDetail['ItemRef']['value'], qb=qb_client)
             #print(asr.Line[0].SalesItemLineDetail['ItemRef']['name'])
-            if asr.Line[0].SalesItemLineDetail['ItemRef']['name'] == sr.product_name \
+            asr_date = str(parse(asr.TxnDate).date())
+            sr_date = str(parse(sr.date).date())
+            if item.Name == sr.product_name \
+                and asr_date == sr_date \
                 and asr.Line[0].SalesItemLineDetail['Qty'] == sr.product_qty \
                 and float(asr.TotalAmt) == float(sr.total_price):
                 logging.warning("found a duplicate for this customer: {} on {} for item: {}, qty: {}, total: {}. skipping...".format(sr.customer_name,sr.date,sr.product_name, sr.product_qty, sr.total_price))
@@ -491,6 +496,8 @@ def main():
         #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
         #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
         #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
+        #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
+        #if order.get('id') == 'HDfl5FmlGF24e1tnDmqh1B6WK9fZY':   #west
 
             logging.info("Processing Order: {}".format(order))
 
@@ -555,23 +562,30 @@ def main():
 
                             else:  # otherwise get the customer from the order itself (customer not registered)
                                 logging.info(
-                                    "Processing Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
+                                    "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
+                                process_order = False
 
-                                logging.debug("getting from fulfillments")
-                                sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
-                                sr.customer_last = sr.customer_name.split(' ')[-1]
-                                sr.customer_first = sr.customer_name.split(' ')[0]
-                                sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                    'address_line_1']
-                                sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                    'locality']
-                                sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                    'administrative_district_level_1']
-                                sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                    'postal_code']
-                                sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
-                                sr.customer_phone = order['fulfillments'][0]['shipment_details']['recipient']['phone_number']
-                                sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
+                                #NOTE: This is triggering from square. But the order coming in was denied. But the order looks normal. Maybe we need to look at
+                                #receipts in square first, then walk back to the order.
+                                # logging.debug("getting from fulfillments")
+                                # sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
+                                # sr.customer_last = sr.customer_name.split(' ')[-1]
+                                # sr.customer_first = sr.customer_name.split(' ')[0]
+                                # sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                #     'address_line_1']
+                                # sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                #     'locality']
+                                # sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                #     'administrative_district_level_1']
+                                # sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                #     'postal_code']
+                                # sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
+                                # if order['fulfillments'][0]['shipment_details']['recipient'].get('phone_number', None) is not None:
+                                #     formatted_order_phone = phonenumbers.format_number(
+                                #         phonenumbers.parse(order['fulfillments'][0]['shipment_details']['recipient']['phone_number'], "US"),
+                                #         phonenumbers.PhoneNumberFormat.NATIONAL)
+                                #     sr.customer_phone = formatted_order_phone
+                                # sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
 
                             #print("matched: {}".format(item0))
