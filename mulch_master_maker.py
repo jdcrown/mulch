@@ -52,6 +52,7 @@ BROWN_KEYS = default.get('brown_keys', 'brown|hardwood')
 RED_KEYS = default.get('red_keys', 'red')
 SPREAD_KEYS = default.get('spreading_keys', 'spread|spreading')
 DONATION_KEYS = default.get('donation_keys', 'donate|donation')
+TROOP_KEYS = 't581|t91|t582|c91'
 SEARCH_KEYS = "|".join([BROWN_KEYS, RED_KEYS, SPREAD_KEYS, DONATION_KEYS, BLACK_KEYS])
 
 rows = []
@@ -124,7 +125,7 @@ def lookup_product(product_name):
 def get_sales_receipts(start_date, end_date):
     qry = r"TxnDate >= '{}' AND TxnDate <= '{}'".format(str(parse(start_date).date()), str(parse(end_date).date()))
     try:
-        srs = SalesReceipt.where(qry, qb=qb_client)
+        srs = SalesReceipt.where(qry, qb=qb_client, max_results=1000)
         logging.info("Found {} records to process.".format(len(srs)))
         return srs
     except ValidationException as ve:
@@ -135,6 +136,7 @@ def get_sales_receipts(start_date, end_date):
 @dataclass
 class MulchSalesReport:
     date: str = None
+    date_modified: str = None
     customer_name: str = None
     customer_first: str = None
     customer_last: str = None
@@ -151,18 +153,22 @@ class MulchSalesReport:
     customer_phone = None
     sr_record_id: str = None
     sr_product_name: str = None
+    sr_product_color: str = None
     sr_product_qty: int = 0
     sr_product_sku: str = None
     sr_product_memo: str = None
     sr_product_price = None
     sr_total_price: float = None
+    sr_check_no: str = None
 
     brown_qty: int = 0
     red_qty: int = 0
     black_qty: int = 0
 
     spread_date: str = None
-    spread_qty: int = 0
+    spread_sale_no: str = None
+    spread_qty: int = None
+    spread_total: float = None
     spread_notes: str = None
 
     donate_total: str = None
@@ -174,25 +180,79 @@ class MulchSalesReport:
     scout_sale: str = None
     unit_sale: str = None
 
+    def to_dict(self, index):
+        return {
+            'Sale #': self.sr_record_id,
+            'Date': self.date,
+            'Income\nUnit': self.unit_income,
+            'Sales Unit': self.unit_sale,
+            'ScoutName': self.scout_sale,
+            'CustomerName': self.customer_name,
+            'Email Address': self.customer_email,
+            'Telephone': self.customer_phone,
+            'Billing Address': self.billing_street,
+            'Delivery Address': self.customer_street,
+            'CITY': self.customer_city,
+            'ZIP': self.customer_zip,
+            'Subdivision': '',
+            'shares': '',
+            'bags': "=Q{}+R{}+S{}".format(index, index, index),
+#            'bags': self.sr_product_qty,
+            'color': self.sr_product_color,
+            'Brown': self.brown_qty,
+            'Black': self.black_qty,
+            'Red': self.red_qty,
+            'Delivery Notes': self.sr_product_memo,
+            'Total Paid thru Troop': self.sr_total_price,
+            'Check No or Payment Type': self.sr_check_no,
+            'Spread Sale #': self.spread_sale_no,
+            'Spread count': self.spread_qty,
+            'Spread Notes': self.spread_notes,
+            'Spread date': self.spread_date,
+            'Spread Sales': self.spread_total,
+            'Unit Paid': self.unit_income,
+            'DateModified': self.date_modified
+        }
+
+def get_col_widths(dataframe):
+    # First we find the maximum length of the index column
+    idx_max = max([len(str(s)) for s in dataframe.index.values] + [len(str(dataframe.index.name))])
+    # Then, we concatenate this to the max of the lengths of column name and its values for each column, left to right
+    return [idx_max] + [max([len(str(s)) for s in dataframe[col].values] + [len(col)]) for col in dataframe.columns]
+
+
+
 def save_to_excel(list_of_rows):
+    x = [vars(s) for s in list_of_rows]
 
-    df = pandas.DataFrame([vars(s) for s in list_of_rows])
-    cols = "date, customer_name222, customer_first, customer_last, customer_street, customer_city, customer_state, customer_zip, billing_street, billing_city, billing_state, billing_zip, sr_record_id, sr_product_name, sr_product_qty, sr_product_sku, sr_product_memo, sr_total_price, brown_qty, red_qty, black_qty, spread_date, spread_qty, spread_notes, donate_total, payment_method_ref, deposit_account_ref, unit_income, unit_sale, scout_sale, customer_phone, customer_email, sr_product_price"
-    y = list(csv.reader(cols.splitlines()))
+    df = pandas.DataFrame([s.to_dict(index+2) for index, s in enumerate(list_of_rows)])
 
-    df.columns = y[0]
-    #df = pandas.DataFrame(list_of_rows, columns=['a','b','c','d','e','f','g','h','i'])
-    print(df)
-    # Create a Pandas dataframe from the data.
-    # df = pd.DataFrame({'Data': [10, 20, 30, 20, 15, 30, 45]})
-    #
     # # Create a Pandas Excel writer using XlsxWriter as the engine.
     writer = pandas.ExcelWriter('mulch_master.xlsx', engine='xlsxwriter')
+
+    #get access to the workbook for styling
+    workbook = writer.book
+
     #
     # # Convert the dataframe to an XlsxWriter Excel object.
     df.to_excel(writer, sheet_name='Sheet1', index=False)
     #
     # # Close the Pandas Excel writer and output the Excel file.
+
+    blue_background = workbook.add_format({'bg_color': '#8DB3E2', 'font_color': 'black'})
+
+    #Now style the columns
+    worksheet = writer.sheets['Sheet1']
+    worksheet.set_column('O:O', None, blue_background)
+
+    #column width
+    for i, width in enumerate(get_col_widths(df)):
+        worksheet.set_column(i-1, i-1, width)
+
+    #turn on filtering
+    worksheet.autofilter(0, 0, df.shape[0], df.shape[1])
+
+
     writer.save()
 
 
@@ -228,16 +288,30 @@ def process_data():
 
                 #sales receipt
                 sr.date = receipt.TxnDate
-                sr.sr_record_id = receipt.Id
+                sr.sr_record_id = receipt.DocNumber
+                sr.date_modified = receipt.MetaData['LastUpdatedTime']
+                sr.sr_total_price = float(receipt.TotalAmt)
                 scout_credit = receipt.CustomField[0]
                 if scout_credit.StringValue != '':
-                    sr.scout_sale = scout_credit.StringValue
+
+                    credit = scout_credit.StringValue.split(':')
+                    if len(credit) > 1:
+                        sr.unit_sale = credit[0].upper()
+                        sr.scout_sale = credit[1]
+                    elif len(credit) == 1:
+                        if re.findall(TROOP_KEYS, credit[0].lower()):
+                            sr.unit_sale = credit[0].upper()
+                        else:
+                            sr.scout_sale = credit[0]
+                    else:
+                        sr.scout_sale = scout_credit.StringValue
+
                 if receipt.CustomerMemo is not None:
                     sr.sr_product_memo = receipt.CustomerMemo['value']
                 deposit_account = receipt.DepositToAccountRef
                 if deposit_account is not None:
                     sr.unit_income = deposit_account.name
-
+                sr.sr_check_no = receipt.PaymentRefNum
                 #sales receipt line item
                 qty = r.SalesItemLineDetail['Qty']
                 sr.sr_product_qty = qty
@@ -245,16 +319,22 @@ def process_data():
                 sr.sr_product_sku = item.Sku
                 sr.sr_product_name = item.Name
                 sr.sr_product_price = r.SalesItemLineDetail['UnitPrice']
+
                 #color
                 item_name = sr.sr_product_name.lower()
                 if re.findall(BROWN_KEYS, item_name):
                     sr.brown_qty = qty
+                    sr.sr_product_color = 'Brown'
                 elif re.findall(RED_KEYS,item_name):
                     sr.red_qty = qty
+                    sr.sr_product_color = 'Red'
                 elif re.findall(BLACK_KEYS,item_name):
                     sr.black_qty = qty
+                    sr.sr_product_color = 'Black'
                 elif re.findall(SPREAD_KEYS,item_name):
                     sr.spread_qty = qty
+                    sr.spread_sale_no = receipt.DocNumber
+                    sr.spread_total = sr.sr_total_price
                     if receipt.CustomerMemo is not None:
                         sr.sr_product_memo = receipt.CustomerMemo['value']
                 elif re.findall(DONATION_KEYS,item_name):
