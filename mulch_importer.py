@@ -9,13 +9,16 @@ from intuitlib.exceptions import AuthClientError
 from quickbooks import QuickBooks
 from quickbooks.objects.base import PhoneNumber
 from quickbooks.objects.base import Address
+from quickbooks.objects.base import Ref
 from quickbooks.objects.customer import Customer
+from quickbooks.objects.account import Account
 from quickbooks.objects.base import EmailAddress
 from quickbooks.objects.item import Item
 from quickbooks.objects.paymentmethod import PaymentMethod
 from quickbooks.objects.salesreceipt import SalesReceipt
 from quickbooks.exceptions import QuickbooksException
 from quickbooks.exceptions import ValidationException
+
 from prompter import prompt, yesno
 from square.client import Client
 import phonenumbers
@@ -54,6 +57,8 @@ RED_KEYS = default.get('red_keys', 'red')
 SPREAD_KEYS = default.get('spreading_keys', 'spread|spreading')
 DONATION_KEYS = default.get('donation_keys', 'donate|donation')
 SEARCH_KEYS = "|".join([BROWN_KEYS, RED_KEYS, SPREAD_KEYS, DONATION_KEYS, BLACK_KEYS])
+DEFAULT_DEPOSIT_ACCOUNT = default.get('qb_deposit_default_account', 'Undeposited Funds')
+
 
 logging_level = default.get('Logging', 'INFO')
 if logging_level == 'DEBUG':
@@ -149,15 +154,26 @@ def create_customer(sr):
         logging.error("Errot saving new customer. [{}]".format(e.detail))
         return None
 
+def lookup_deposit_account(account_name):
+    try:
+        default_deposit_account_result = Account.where("Active = True AND Name = '" + DEFAULT_DEPOSIT_ACCOUNT + "'", qb=qb_client)
+        if default_deposit_account_result is not None:
+            return default_deposit_account_result[0].Id
+    except Exception as e:
+        logging.error("Error assigning default account info [{}], Error:{}".format(DEFAULT_DEPOSIT_ACCOUNT, e.message))
+
 def lookup_payment_method(payment_name):
     #Get the payment method (square)
-
-    payment_count = PaymentMethod.count("Active = true and Name = '" + payment_name + "'", qb=qb_client)
-    if payment_count == 1:
-        payments = PaymentMethod.where("Active = true and Name = '" + payment_name + "'", qb=qb_client)
-        return payments[0].Id
-    else:
-        logging.error("Please add the 'Sqaure' payment method to quickbooks before running this tool.")
+    try:
+        payment_count = PaymentMethod.count("Active = true and Name = '" + payment_name + "'", qb=qb_client)
+        if payment_count == 1:
+            payments = PaymentMethod.where("Active = true and Name = '" + payment_name + "'", qb=qb_client)
+            return payments[0].Id
+        else:
+            logging.error("Please add the {} payment method to quickbooks before running this tool.".format(payment_name))
+            exit(0)
+    except Exception as e:
+        logging.error("Error assigning default payment info [{}], Error:{}".format(payment_name, e.message))
         exit(0)
 
 def check_and_update_customer_information(cr, customer_id):
@@ -198,6 +214,7 @@ def check_and_update_customer_information(cr, customer_id):
             customer.save(qb_client)
 
     #Customer email update
+    customer = Customer.get(customer_id, qb=qb_client)
     email_new = cr.customer_email
     email_orig_obj = customer.PrimaryEmailAddr
     if email_new is not None and email_orig_obj is not None:
@@ -218,6 +235,7 @@ def check_and_update_customer_information(cr, customer_id):
             customer.save(qb_client)
 
     #Customer address update
+    customer = Customer.get(customer_id, qb=qb_client)
     address_line1_new = cr.customer_street
     address_line1_old_obj = customer.BillAddr
     if address_line1_new is not None and address_line1_old_obj is not None:
@@ -299,7 +317,10 @@ def create_order(sr):
               }
           ],
           "PaymentMethodRef": {
-              "value": lookup_payment_method('square')
+              "value": sr.payment_method_ref
+          },
+          "DepositToAccountRef": {
+              "value": sr.deposit_account_ref
           },
           "CustomerMemo": {
               "value": sr.memo
@@ -319,7 +340,7 @@ def create_order(sr):
     if customers_count == 0:
         # create a new customer?
         if AUTO_CREATE_CUSTOMERS:
-            answer = yesno("Customer [{}] not found. Create the customer?".format(sr.customer_name))
+            answer = yesno("Customer [{}] not found residing on [{}]. Create the customer?".format(sr.customer_name, sr.customer_street))
             if answer:
                 logging.warning("Creating the customer [{}] in quickbooks.".format(sr.customer_name))
                 customer = create_customer(sr)
@@ -336,7 +357,8 @@ def create_order(sr):
         customer_name = customers[0].DisplayName
         logging.debug("Customer id: {}".format(customer_id))
 
-        check_and_update_customer_information(sr, customer_id)
+        if customer_id is not None:
+            check_and_update_customer_information(sr, customer_id)
 
         sr_body['CustomerRef']['value'] = customer_id
         sr_body['CustomerRef']['name'] = customer_name
@@ -350,7 +372,6 @@ def create_order(sr):
 
         #post a new one
         sales_receipt = sales_receipt.from_json(sr_body)
-
         sales_receipt.TxnDate = sr.date
 
         #check for duplicates
@@ -440,15 +461,20 @@ class MulchSalesReceipt:
     customer_zip: str = None
     customer_email = None
     customer_phone = None
-    payment_type: str = "Square"
     product_name: str = None
     product_qty: int = None
     product_sku: str = None
     memo: str = None
     product_price = None
     total_price: float = None
+    payment_method_ref: object = None
+    deposit_account_ref: object = None
 
 def main():
+    #Setup some quickbooks defaults
+    default_deposit_account_ref = lookup_deposit_account(DEFAULT_DEPOSIT_ACCOUNT)
+    default_pament_method_ref = lookup_payment_method('Square')
+
     try:
         client = Client(
             square_version='2021-01-21',
@@ -469,8 +495,11 @@ def main():
     body['query']['filter']['date_time_filter']['created_at']['start_at'] = PROCESSING_START_DATETIME
     body['query']['filter']['date_time_filter']['created_at']['end_at'] = PROCESSING_END_DATETIME
     body['query']['filter']['fulfillment_filter'] = {}
-    body['query']['filter']['fulfillment_filter']['fulfillment_types'] = ['SHIPMENT']
+    body['query']['filter']['fulfillment_filter']['fulfillment_types'] = ['SHIPMENT','DIGITAL']
     body['query']['filter']['fulfillment_filter']['fulfillment_states'] = ['PROPOSED']
+    body['query']['filter']['tenders_filter'] = {}
+    body['query']['filter']['tenders_filter']['card_details'] = {}
+    body['query']['filter']['tenders_filter']['card_details']['status'] = ['CAPTURED']
     body['return_entries'] = True
     body['query']['sort'] = {}
     body['query']['sort']['sort_field'] = 'CREATED_AT'
@@ -485,125 +514,132 @@ def main():
         print(orders_raw.errors)
 
     all_orders = orders_raw.body.get('order_entries')
-    if all_orders: print("Found [{}] orders in square to process.".format(len(all_orders)))
-    for order_cursor in all_orders:
-        order = orders_api.retrieve_order(order_cursor['order_id']).body['order']
-        created_on = parse(order.get('created_at')).date()
+    if all_orders is not None:
+        print("Found [{}] orders in square to process.".format(len(all_orders)))
+        for order_cursor in all_orders:
+            order = orders_api.retrieve_order(order_cursor['order_id']).body['order']
+            created_on = parse(order.get('created_at')).date()
 
-        #check only from a certain time forward
-        if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
-        #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
-        #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
-        #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
-        #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
-        #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
-        #if order.get('id') == 'HDfl5FmlGF24e1tnDmqh1B6WK9fZY':   #west
+            #check only from a certain time forward
+            if True:
+            #This filter area is for testing...
+            #if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
+            #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
+            #if order.get('id') == 'vtwmcNbBlJCJ15WXoPQIuQVzYucZY': #sissy
+            #if order.get('id') == '9q78JCThpddGoaPBemt3ukD33DIZY': #unregistered user
+            #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
+            #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
+            #if order.get('id') == 'T1jELiTjKFLhxWKlwMOVRdIos75YY':   #Bob Bethea
+            #if order.get('id') == 'lQCFoJHWfVg7V19AnRErUObLiVbZY': #cecere mulch
 
-            logging.info("Processing Order: {}".format(order))
+                logging.info("Processing Order: {}".format(order))
 
-            if 'line_items' in order:
-                for item in order['line_items']:
-                    sr = MulchSalesReceipt()
-                    logging.debug("Processing Line Item: {}".format(item))
-                    if 'name' in item:
-                        #print(item0)
-                        if re.findall(SEARCH_KEYS, item['name'].lower()):
-                            process_order = True
-                            logging.debug("Processing Line Item: {}".format(item))
-                            item_name = item['name'].lower()
-                            item_quantity = int(item['quantity'])
-                            item_variation = item['variation_name']
-                            # get customer for order if we have a customer id
-                            if bool(order.get('customer_id', None)):
-                                logging.info(
-                                    "Processing Square customer id: [{}], order id:[{}], details: [Item:{}, variation:{}, quantity:{}]".format(order['customer_id'],
-                                                                                                order['id'], item_name, item_variation, item_quantity))
-                                customer_id = order['customer_id']
-                                payment_id = order['tenders'][0]['id']
-                                try:
-                                    payments_api = client.payments
-                                    payment_raw = payments_api.get_payment(payment_id)
-                                    if payment_raw.is_success():
-                                        payment = payment_raw.body['payment']
-                                        logging.debug("Payment Raw: {}".format(payment))
-                                        sr.customer_street = payment['shipping_address']['address_line_1']
-                                        sr.customer_state = payment['shipping_address']['administrative_district_level_1']
-                                        sr.customer_city = payment['shipping_address']['locality']
-                                        sr.customer_zip = payment['shipping_address']['postal_code']
-                                        sr.customer_email = payment['buyer_email_address']
-                                    else:
-                                        logging.error(
-                                            "Cannot find square payment for payment_id: [{}]".format(payment_id))
+                if 'line_items' in order:
+                    for item in order['line_items']:
+                        sr = MulchSalesReceipt()
+                        logging.debug("Processing Line Item: {}".format(item))
+                        if 'name' in item:
+                            #print(item0)
+                            if re.findall(SEARCH_KEYS, item['name'].lower()):
+                                process_order = True
+                                logging.debug("Processing Line Item: {}".format(item))
+                                item_name = item['name'].lower()
+                                item_quantity = int(item['quantity'])
+                                item_variation = item['variation_name']
+                                # get customer for order if we have a customer id
+                                if bool(order.get('customer_id', None)):
+                                    logging.info(
+                                        "Processing Square customer id: [{}], order id:[{}], details: [Item:{}, variation:{}, quantity:{}]".format(order['customer_id'],
+                                                                                                    order['id'], item_name, item_variation, item_quantity))
+                                    customer_id = order['customer_id']
+                                    payment_id = order['tenders'][0]['id']
+                                    try:
+                                        payments_api = client.payments
+                                        payment_raw = payments_api.get_payment(payment_id)
+                                        if payment_raw.is_success():
+                                            payment = payment_raw.body['payment']
+                                            logging.debug("Payment Raw: {}".format(payment))
+                                            sr.customer_street = payment['shipping_address']['address_line_1']
+                                            sr.customer_state = payment['shipping_address']['administrative_district_level_1']
+                                            sr.customer_city = payment['shipping_address']['locality']
+                                            sr.customer_zip = payment['shipping_address']['postal_code']
+                                            sr.customer_email = payment['buyer_email_address']
+                                        else:
+                                            logging.error(
+                                                "Cannot find square payment for payment_id: [{}]".format(payment_id))
+                                            process_order = False
+                                    except Exception as e:
+                                        logging.error("Error finding square payment for payment_id: [{}], msg:[{}]".format(payment_id, e.message))
                                         process_order = False
-                                except Exception as e:
-                                    logging.error("Error finding square payment for payment_id: [{}], msg:[{}]".format(payment_id, e.message))
-                                    process_order = False
-                                try:
-                                    customers_api = client.customers
-                                    customer_raw = customers_api.retrieve_customer(customer_id)
-                                    if customer_raw.is_success():
-                                        customer = customer_raw.body['customer']
-                                        logging.debug("Customer Response: {}".format(customer))
-                                        sr.customer_first = format(customer['given_name'])
-                                        sr.customer_last = customer['family_name']
-                                        sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
-                                        if customer.get('phone_number', None) is not None:
-                                            formatted_phone = phonenumbers.format_number(phonenumbers.parse(customer.get('phone_number', None), "US"),
-                                                                                       phonenumbers.PhoneNumberFormat.NATIONAL)
-                                            sr.customer_phone = formatted_phone
-                                    else:
-                                        logging.error("Cannot process square customer id: [{}]".format(customer_id))
+                                    try:
+                                        customers_api = client.customers
+                                        customer_raw = customers_api.retrieve_customer(customer_id)
+                                        if customer_raw.is_success():
+                                            customer = customer_raw.body['customer']
+                                            logging.debug("Customer Response: {}".format(customer))
+                                            sr.customer_first = format(customer['given_name'])
+                                            sr.customer_last = customer['family_name']
+                                            sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
+                                            if customer.get('phone_number', None) is not None:
+                                                formatted_phone = phonenumbers.format_number(phonenumbers.parse(customer.get('phone_number', None), "US"),
+                                                                                           phonenumbers.PhoneNumberFormat.NATIONAL)
+                                                sr.customer_phone = formatted_phone
+                                        else:
+                                            logging.error("Cannot process square customer id: [{}]".format(customer_id))
+                                            process_order = False
+                                    except Exception as e:
+                                        logging.error("Error processing square customer id: [{}], msg: {}".format(customer_id, e.message))
                                         process_order = False
-                                except Exception as e:
-                                    logging.error("Error processing square customer id: [{}], msg: {}".format(customer_id, e.message))
-                                    process_order = False
-                                if order['fulfillments'][0].get('shipment_details') and order['fulfillments'][0]['shipment_details'].get('shipping_note'):
+                                    if order['fulfillments'][0].get('shipment_details') and order['fulfillments'][0]['shipment_details'].get('shipping_note'):
+                                        sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
+
+                                else:  # otherwise get the customer from the order itself (customer not registered)
+                                    logging.info(
+                                        "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
+                                    #process_order = False
+
+                                    #NOTE: This is triggering from square. But the order coming in was denied. But the order looks normal. Maybe we need to look at
+                                    #receipts in square first, then walk back to the order.
+                                    logging.debug("getting from fulfillments")
+                                    sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
+                                    sr.customer_last = sr.customer_name.split(' ')[-1]
+                                    sr.customer_first = sr.customer_name.split(' ')[0]
+                                    sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                        'address_line_1']
+                                    sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                        'locality']
+                                    sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                        'administrative_district_level_1']
+                                    sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                        'postal_code']
+                                    sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
+                                    if order['fulfillments'][0]['shipment_details']['recipient'].get('phone_number', None) is not None:
+                                        formatted_order_phone = phonenumbers.format_number(
+                                            phonenumbers.parse(order['fulfillments'][0]['shipment_details']['recipient']['phone_number'], "US"),
+                                            phonenumbers.PhoneNumberFormat.NATIONAL)
+                                        sr.customer_phone = formatted_order_phone
                                     sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
-                            else:  # otherwise get the customer from the order itself (customer not registered)
-                                logging.info(
-                                    "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
-                                process_order = False
 
-                                #NOTE: This is triggering from square. But the order coming in was denied. But the order looks normal. Maybe we need to look at
-                                #receipts in square first, then walk back to the order.
-                                # logging.debug("getting from fulfillments")
-                                # sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
-                                # sr.customer_last = sr.customer_name.split(' ')[-1]
-                                # sr.customer_first = sr.customer_name.split(' ')[0]
-                                # sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                #     'address_line_1']
-                                # sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                #     'locality']
-                                # sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                #     'administrative_district_level_1']
-                                # sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                #     'postal_code']
-                                # sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
-                                # if order['fulfillments'][0]['shipment_details']['recipient'].get('phone_number', None) is not None:
-                                #     formatted_order_phone = phonenumbers.format_number(
-                                #         phonenumbers.parse(order['fulfillments'][0]['shipment_details']['recipient']['phone_number'], "US"),
-                                #         phonenumbers.PhoneNumberFormat.NATIONAL)
-                                #     sr.customer_phone = formatted_order_phone
-                                # sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
+                                #print("matched: {}".format(item0))
+                                # item_name = item['name'].lower()
+                                # item_quantity = int(item['quantity'])
+                                # item_variation = item['variation_name']
 
-
-                            #print("matched: {}".format(item0))
-                            # item_name = item['name'].lower()
-                            # item_quantity = int(item['quantity'])
-                            # item_variation = item['variation_name']
-
-                            #now we have a clean line item for mulch. Build the object out for importing into quickbooks
-                            if process_order:
-                                sr = extract_item(sr, item_quantity, item_name, item_variation)
-                                sr.date = order['created_at']
-                                sr.product_price = square_money_to_decimal(item['base_price_money']['amount'])
-                                sr.total_price = square_money_to_decimal(item['total_money']['amount'])
-                                create_order(sr)
-                                logging.debug(sr)
-                            else:
-                                logging.error("Cannot process Order for orderid [{}]. Either the customer or the payment cannot be found in square...skipping".format(order['id']))
-
+                                #now we have a clean line item for mulch. Build the object out for importing into quickbooks
+                                if process_order:
+                                    sr = extract_item(sr, item_quantity, item_name, item_variation)
+                                    sr.date = order['created_at']
+                                    sr.product_price = square_money_to_decimal(item['base_price_money']['amount'])
+                                    sr.total_price = square_money_to_decimal(item['total_money']['amount'])
+                                    sr.deposit_account_ref = default_deposit_account_ref
+                                    sr.payment_method_ref = default_pament_method_ref
+                                    create_order(sr)
+                                    logging.debug(sr)
+                                else:
+                                    logging.error("Cannot process Order for orderid [{}]. Either the customer or the payment cannot be found in square...skipping".format(order['id']))
+    else:
+        logging.info("There are no orders to process for the time range: {} to {}".format(PROCESSING_START_DATETIME, PROCESSING_END_DATETIME))
 qb_client = authenticate_to_quickbooks()
 if qb_client:
     main()
