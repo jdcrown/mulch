@@ -90,7 +90,7 @@ def authenticate_to_quickbooks():
 
 def load_subdivision_data():
     subdivision_data = {}
-    with open('county_lookup_data_2021.csv', mode='r') as csv_file:
+    with open('data/county_lookup_data_2021.csv', mode='r') as csv_file:
         csv_reader = csv.DictReader(csv_file)
         line_count = 0
         for row in csv_reader:
