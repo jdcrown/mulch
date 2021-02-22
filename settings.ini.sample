@@ -8,8 +8,9 @@ red_keys=red
 black_keys=black
 donation_keys=donate|donation
 spreading_keys=spread|spreading
-start_date = 2020-11-13T00:00
-end_date = 2021-02-15T23:59
+start_date = 2020-11-13T00:00-05:00
+end_date = 2021-02-15T23:59-05:00
+qb_deposit_default_account = Undeposited Funds
 
 [sandbox]
 CLIENT_ID= <clientid>

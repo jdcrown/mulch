@@ -88,6 +88,19 @@ def authenticate_to_quickbooks():
     except AuthClientError as e:
         logging.error("Cannot connect to quickbooks: Error [{}]".format(e.content))
 
+def load_subdivision_data():
+    subdivision_data = {}
+    with open('county_lookup_data_2021.csv', mode='r') as csv_file:
+        csv_reader = csv.DictReader(csv_file)
+        line_count = 0
+        for row in csv_reader:
+            if line_count == 0:
+                line_count += 1
+            line_count += 1
+            subdivision_data[row['ST_NO'] + " " + row['ST_NAME']] = row['SUBDIV_NAME']
+            subdivision_data.update()
+        print(f'Processed {line_count} county data lines.')
+    return subdivision_data
 
 def lookup_deposit_account(account_name):
     try:
@@ -148,6 +161,7 @@ class MulchSalesReport:
     billing_city: str = None
     billing_state: str = None
     billing_zip: str = None
+    subdivision: str = None
 
     customer_email = None
     customer_phone = None
@@ -160,6 +174,7 @@ class MulchSalesReport:
     sr_product_price = None
     sr_total_price: float = None
     sr_check_no: str = None
+    sr_bags_qty: int = None
 
     brown_qty: int = 0
     red_qty: int = 0
@@ -167,6 +182,7 @@ class MulchSalesReport:
 
     spread_date: str = None
     spread_sale_no: str = None
+    spread_check_no: str = None
     spread_qty: int = None
     spread_total: float = None
     spread_notes: str = None
@@ -194,23 +210,38 @@ class MulchSalesReport:
             'Delivery Address': self.customer_street,
             'CITY': self.customer_city,
             'ZIP': self.customer_zip,
-            'Subdivision': '',
+            'Subdivision': self.subdivision,
+            'Status': '',
+            'run': '',
+            'seq': '',
             'shares': '',
-            'bags': "=Q{}+R{}+S{}".format(index, index, index),
-#            'bags': self.sr_product_qty,
+            'bags': self.sr_bags_qty, #"=Q{}+R{}+S{}".format(index, index, index),
             'color': self.sr_product_color,
             'Brown': self.brown_qty,
             'Black': self.black_qty,
             'Red': self.red_qty,
             'Delivery Notes': self.sr_product_memo,
-            'Total Paid thru Troop': self.sr_total_price,
+            'reprint letter': '',
+            'Mulch\nRevenue': '',
+            'Total Paid thru Troops': self.sr_total_price,
             'Check No or Payment Type': self.sr_check_no,
+            'Paypal\nM Square': '',
+            'Paypal\nS Square': '',
             'Spread Sale #': self.spread_sale_no,
-            'Spread count': self.spread_qty,
-            'Spread Notes': self.spread_notes,
+            'Spread\nCheck#': self.spread_check_no,
+            'Spread\ncount': self.spread_qty,
+            'Spread\nNotes': self.spread_notes,
             'Spread date': self.spread_date,
-            'Spread Sales': self.spread_total,
-            'Unit Paid': self.unit_income,
+            'Unit\nPaid': self.unit_income,
+            'Spread\nSales': self.spread_total,
+            'Overpayments\nand donations':'',
+            'unpaid\nshortage':'',
+            'DONATION':'',
+            'Mulch\n45+':'',
+            'Mulch\n25-44':'',
+            'Mulch\n20-24':'',
+            'Mulch\n1-9':'',
+            'Total Sales': '',
             'DateModified': self.date_modified
         }
 
@@ -258,9 +289,10 @@ def save_to_excel(list_of_rows):
 
 def process_data():
     rows = []
+    subdivision_data = load_subdivision_data()
+
     sales_receipts = get_sales_receipts(PROCESSING_START_DATETIME, PROCESSING_END_DATETIME)
     for receipt in sales_receipts:
-
         for r in receipt.Line:
             if r.Id is not None:
                 sr = MulchSalesReport()
@@ -276,6 +308,9 @@ def process_data():
                     sr.customer_city = c.ShipAddr.City
                     sr.customer_state = c.ShipAddr.CountrySubDivisionCode
                     sr.customer_zip = c.ShipAddr.PostalCode
+                    raw_street_lookup = sr.customer_street.split(' ')[0:-1]
+                    street_lookup = ' '.join(raw_street_lookup).strip().upper()
+                    sr.subdivision = subdivision_data.get(street_lookup)
 
                 if c.BillAddr is not None:
                     sr.billing_street = c.BillAddr.Line1
@@ -286,25 +321,26 @@ def process_data():
                 sr.customer_phone = c.PrimaryPhone
                 sr.customer_email = c.PrimaryEmailAddr
 
+
                 #sales receipt
                 sr.date = receipt.TxnDate
                 sr.sr_record_id = receipt.DocNumber
                 sr.date_modified = receipt.MetaData['LastUpdatedTime']
-                sr.sr_total_price = float(receipt.TotalAmt)
+                sr.sr_total_price = float(r.Amount)
                 scout_credit = receipt.CustomField[0]
                 if scout_credit.StringValue != '':
 
                     credit = scout_credit.StringValue.split(':')
                     if len(credit) > 1:
                         sr.unit_sale = credit[0].upper()
-                        sr.scout_sale = credit[1]
+                        sr.scout_sale = credit[1].strip()
                     elif len(credit) == 1:
                         if re.findall(TROOP_KEYS, credit[0].lower()):
                             sr.unit_sale = credit[0].upper()
                         else:
-                            sr.scout_sale = credit[0]
+                            sr.scout_sale = credit[0].strip()
                     else:
-                        sr.scout_sale = scout_credit.StringValue
+                        sr.scout_sale = scout_credit.StringValue.strip()
 
                 if receipt.CustomerMemo is not None:
                     sr.sr_product_memo = receipt.CustomerMemo['value']
@@ -314,7 +350,7 @@ def process_data():
                 sr.sr_check_no = receipt.PaymentRefNum
                 #sales receipt line item
                 qty = r.SalesItemLineDetail['Qty']
-                sr.sr_product_qty = qty
+                #sr.sr_product_qty = qty
                 item = Item.get(r.SalesItemLineDetail['ItemRef']['value'], qb=qb_client)
                 sr.sr_product_sku = item.Sku
                 sr.sr_product_name = item.Name
@@ -333,12 +369,17 @@ def process_data():
                     sr.sr_product_color = 'Black'
                 elif re.findall(SPREAD_KEYS,item_name):
                     sr.spread_qty = qty
+                    sr.spread_check_no = sr.sr_check_no
                     sr.spread_sale_no = receipt.DocNumber
                     sr.spread_total = sr.sr_total_price
+                    sr.spread_date = item.Name
                     if receipt.CustomerMemo is not None:
                         sr.sr_product_memo = receipt.CustomerMemo['value']
                 elif re.findall(DONATION_KEYS,item_name):
                     sr.donate_total = sr.sr_total_price
+                    sr.sr_product_memo = ''
+
+                sr.sr_bags_qty = sr.black_qty + sr.brown_qty + sr.red_qty
 
 
 
@@ -346,8 +387,8 @@ def process_data():
                 #result = qb_client.get_report('TransactionListByTagType')
                 #print(result)
 
-        print('.', end='')
-        rows.append(sr)
+                print('.', end='')
+                rows.append(sr)
     return rows
 
 def main():

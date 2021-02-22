@@ -1,6 +1,7 @@
 import json
 import re
 import logging
+import csv
 import configparser
 from dataclasses import dataclass
 from dateutil.parser import parse
@@ -521,7 +522,7 @@ def main():
             created_on = parse(order.get('created_at')).date()
 
             #check only from a certain time forward
-            if True:
+
             #This filter area is for testing...
             #if created_on >= parse(PROCESSING_START_DATETIME).date() and created_on < parse(PROCESSING_END_DATETIME).date():
             #if order.get('id') == 'Hv5nLw567WQcPMvyEFRvbttF7BeZY': #me
@@ -530,8 +531,8 @@ def main():
             #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
             #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
             #if order.get('id') == 'T1jELiTjKFLhxWKlwMOVRdIos75YY':   #Bob Bethea
-            #if order.get('id') == 'lQCFoJHWfVg7V19AnRErUObLiVbZY': #cecere mulch
-
+            #if order.get('id') == 'r3KCnSVwpZL23Lgzf4yHREfXLTOZY': #cecere mulch
+            if True:
                 logging.info("Processing Order: {}".format(order))
 
                 if 'line_items' in order:
@@ -601,24 +602,49 @@ def main():
                                     #NOTE: This is triggering from square. But the order coming in was denied. But the order looks normal. Maybe we need to look at
                                     #receipts in square first, then walk back to the order.
                                     logging.debug("getting from fulfillments")
-                                    sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
-                                    sr.customer_last = sr.customer_name.split(' ')[-1]
-                                    sr.customer_first = sr.customer_name.split(' ')[0]
-                                    sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                        'address_line_1']
-                                    sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                        'locality']
-                                    sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                        'administrative_district_level_1']
-                                    sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
-                                        'postal_code']
-                                    sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
-                                    if order['fulfillments'][0]['shipment_details']['recipient'].get('phone_number', None) is not None:
-                                        formatted_order_phone = phonenumbers.format_number(
-                                            phonenumbers.parse(order['fulfillments'][0]['shipment_details']['recipient']['phone_number'], "US"),
-                                            phonenumbers.PhoneNumberFormat.NATIONAL)
-                                        sr.customer_phone = formatted_order_phone
-                                    sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
+
+                                    payment_id = order['tenders'][0]['id']
+                                    try:
+                                        payments_api = client.payments
+                                        payment_raw = payments_api.get_payment(payment_id)
+                                        if payment_raw.is_success():
+                                            payment = payment_raw.body['payment']
+                                            logging.debug("Payment Raw: {}".format(payment))
+                                            sr.customer_street = payment['shipping_address']['address_line_1']
+                                            sr.customer_state = payment['shipping_address']['administrative_district_level_1']
+                                            sr.customer_city = payment['shipping_address']['locality']
+                                            sr.customer_zip = payment['shipping_address']['postal_code']
+                                            sr.customer_email = payment['buyer_email_address']
+                                        else:
+                                            logging.error(
+                                                "Cannot find square payment for payment_id: [{}]".format(payment_id))
+                                            process_order = False
+                                    except Exception as e:
+                                        logging.error("Error finding square payment for payment_id: [{}], msg:[{}]".format(payment_id, e.message))
+                                        process_order = False
+
+                                    #Get customer from existing email
+                                    customer = Customer.where("PrimaryEmailAddr = '" + sr.customer_email.strip() + "'", qb=qb_client)
+                                    if customer is not None:
+                                        sr.customer_name = customer[0].DisplayName
+                                   #sr.customer_name = #order['fulfillments'][0]['shipment_details']['recipient']['display_name']
+                                   # sr.customer_last = sr.customer_name.split(' ')[-1]
+                                   # sr.customer_first = sr.customer_name.split(' ')[0]
+                                   # sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                   #     'address_line_1']
+                                   # sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                   #     'locality']
+                                   # sr.customer_state = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                   #     'administrative_district_level_1']
+                                   # sr.customer_zip = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                   #     'postal_code']
+                                   # sr.customer_email = order['fulfillments'][0]['shipment_details']['recipient']['email_address']
+                                   # if order['fulfillments'][0]['shipment_details']['recipient'].get('phone_number', None) is not None:
+                                    #    formatted_order_phone = phonenumbers.format_number(
+                                    #        phonenumbers.parse(order['fulfillments'][0]['shipment_details']['recipient']['phone_number'], "US"),
+                                    #        phonenumbers.PhoneNumberFormat.NATIONAL)
+                                     #   sr.customer_phone = formatted_order_phone
+                                    #sr.memo = order['fulfillments'][0]['shipment_details'].get('shipping_note', None)
 
 
                                 #print("matched: {}".format(item0))

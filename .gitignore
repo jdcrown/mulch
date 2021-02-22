@@ -3,3 +3,4 @@ settings.ini
 *.csv
 *.xls
 *.xlsx
+!county_lookup_data*
