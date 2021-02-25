@@ -112,8 +112,8 @@ def create_customer(sr):
 
     customer = Customer()
     customer_body = {
-          "GivenName": sr.customer_first,
-          "FamilyName": sr.customer_last,
+          "GivenName": sr.customer_first.capitalize(),
+          "FamilyName": sr.customer_last.capitalize(),
           "FullyQualifiedName": sr.customer_name,
           "PrimaryEmailAddr": {
             "Address": sr.customer_email
@@ -343,7 +343,7 @@ def create_order(sr):
         if AUTO_CREATE_CUSTOMERS:
             answer = yesno("Customer [{}] not found residing on [{}]. Create the customer?".format(sr.customer_name, sr.customer_street))
             if answer:
-                logging.warning("Creating the customer [{}] in quickbooks.".format(sr.customer_name))
+                logging.info("Creating the customer [{}] in quickbooks.".format(sr.customer_name))
                 customer = create_customer(sr)
                 if customer is not None:
                     customers_count = 1
@@ -531,7 +531,7 @@ def main():
             #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
             #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
             #if order.get('id') == 'T1jELiTjKFLhxWKlwMOVRdIos75YY':   #Bob Bethea
-            #if order.get('id') == 'r3KCnSVwpZL23Lgzf4yHREfXLTOZY': #cecere mulch
+            #if order.get('id') == 'BqOO7vznVYNWqSCGuneY4hRDaGEZY': #mulch
             if True:
                 logging.info("Processing Order: {}".format(order))
 
@@ -578,9 +578,9 @@ def main():
                                         if customer_raw.is_success():
                                             customer = customer_raw.body['customer']
                                             logging.debug("Customer Response: {}".format(customer))
-                                            sr.customer_first = format(customer['given_name'])
-                                            sr.customer_last = customer['family_name']
-                                            sr.customer_name = "{} {}".format(customer['given_name'], customer['family_name'])
+                                            sr.customer_first = format(customer['given_name']).capitalize()
+                                            sr.customer_last = customer['family_name'].capitalize()
+                                            sr.customer_name = "{} {}".format(sr.customer_first, sr.customer_last)
                                             if customer.get('phone_number', None) is not None:
                                                 formatted_phone = phonenumbers.format_number(phonenumbers.parse(customer.get('phone_number', None), "US"),
                                                                                            phonenumbers.PhoneNumberFormat.NATIONAL)
@@ -595,8 +595,8 @@ def main():
                                         sr.memo = order['fulfillments'][0]['shipment_details']['shipping_note']
 
                                 else:  # otherwise get the customer from the order itself (customer not registered)
-                                    logging.info(
-                                        "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
+                                    #logging.info(
+                                    #    "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]".format(order['id'], order['created_at']))
                                     #process_order = False
 
                                     #NOTE: This is triggering from square. But the order coming in was denied. But the order looks normal. Maybe we need to look at
@@ -623,14 +623,19 @@ def main():
                                         logging.error("Error finding square payment for payment_id: [{}], msg:[{}]".format(payment_id, e.message))
                                         process_order = False
 
-                                    #Get customer from existing email
-                                    customer = Customer.where("PrimaryEmailAddr = '" + sr.customer_email.strip() + "'", qb=qb_client)
-                                    if customer is not None:
-                                        sr.customer_name = customer[0].DisplayName
-                                   #sr.customer_name = #order['fulfillments'][0]['shipment_details']['recipient']['display_name']
-                                   # sr.customer_last = sr.customer_name.split(' ')[-1]
-                                   # sr.customer_first = sr.customer_name.split(' ')[0]
-                                   # sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
+                                    if order['fulfillments'] and len(order['fulfillments']) > 0:
+                                        if order['fulfillments'][0].get('shipment_details') and order['fulfillments'][0]['shipment_details'].get('recipient'):
+                                            sr.customer_name = order['fulfillments'][0]['shipment_details']['recipient']['display_name']
+                                            sr.customer_last = sr.customer_name.split(' ')[-1].capitalize()
+                                            sr.customer_first = sr.customer_name.split(' ')[0].capitalize()
+
+                                    if sr.customer_name is None:
+                                        logging.info(
+                                            "Skipping Square (non-registered customer): order id:[{}], createdOn: [{}]. Could not find customer name in the order.".format(
+                                                order['id'], order['created_at']))
+                                        process_order = False
+
+                                        # sr.customer_street = order['fulfillments'][0]['shipment_details']['recipient']['address'][
                                    #     'address_line_1']
                                    # sr.customer_city = order['fulfillments'][0]['shipment_details']['recipient']['address'][
                                    #     'locality']
