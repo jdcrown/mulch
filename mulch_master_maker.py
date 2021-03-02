@@ -5,6 +5,7 @@ import logging
 import configparser
 import pandas
 from dataclasses import dataclass
+import datetime
 from dataclasses import make_dataclass
 from dateutil.parser import parse
 from intuitlib.client import AuthClient
@@ -63,8 +64,8 @@ if logging_level == 'DEBUG':
 else:
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
 
-PROCESSING_START_DATETIME = config['DEFAULT']['start_date']
-PROCESSING_END_DATETIME = config['DEFAULT']['end_date']
+PROCESSING_START_DATETIME = config['DEFAULT']['report_start_date']
+PROCESSING_END_DATETIME = config['DEFAULT']['report_end_date']
 
 def authenticate_to_quickbooks():
     print("authorizing to Quickbooks...")
@@ -124,6 +125,21 @@ def lookup_payment_method(payment_name):
         logging.error("Error assigning default payment info [{}], Error:{}".format(payment_name, e.message))
         exit(0)
 
+def lookup_troop_name(raw_troop_name):
+    if raw_troop_name == 'T581':
+        return "T5"
+    elif raw_troop_name == 'T91':
+        return "T9"
+    elif raw_troop_name == 'C91':
+        return "C9"
+    else:
+        return raw_troop_name
+
+def lookup_spreading_date(item_name):
+    item = item_name.split(' ')
+    if len(item) > 1 and item[0].lower() == 'spreading':
+        item_dt = parse(item[1])
+        return parse(item[1]).strftime('%m/%d/%Y')
 
 def lookup_product(product_name):
     #Get the Item
@@ -180,7 +196,7 @@ class MulchSalesReport:
     red_qty: int = 0
     black_qty: int = 0
 
-    spread_date: str = None
+    spread_date: date = None
     spread_sale_no: str = None
     spread_check_no: str = None
     spread_qty: int = None
@@ -259,7 +275,7 @@ def save_to_excel(list_of_rows):
     df = pandas.DataFrame([s.to_dict(index+2) for index, s in enumerate(list_of_rows)])
 
     # # Create a Pandas Excel writer using XlsxWriter as the engine.
-    writer = pandas.ExcelWriter('mulch_master.xlsx', engine='xlsxwriter')
+    writer = pandas.ExcelWriter("mulch_master_{}.xlsx".format(datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')), engine='xlsxwriter')
 
     #get access to the workbook for styling
     workbook = writer.book
@@ -332,11 +348,12 @@ def process_data():
 
                     credit = scout_credit.StringValue.split(':')
                     if len(credit) > 1:
-                        sr.unit_sale = credit[0].upper()
+
+                        sr.unit_sale = lookup_troop_name(credit[0].upper())
                         sr.scout_sale = credit[1].strip()
                     elif len(credit) == 1:
                         if re.findall(TROOP_KEYS, credit[0].lower()):
-                            sr.unit_sale = credit[0].upper()
+                            sr.unit_sale = lookup_troop_name(credit[0].upper())
                         else:
                             sr.scout_sale = credit[0].strip()
                     else:
@@ -372,7 +389,7 @@ def process_data():
                     sr.spread_check_no = sr.sr_check_no
                     sr.spread_sale_no = receipt.DocNumber
                     sr.spread_total = sr.sr_total_price
-                    sr.spread_date = item.Name
+                    sr.spread_date = lookup_spreading_date(item.Name)
                     if receipt.CustomerMemo is not None:
                         sr.sr_product_memo = receipt.CustomerMemo['value']
                 elif re.findall(DONATION_KEYS,item_name):
@@ -386,7 +403,8 @@ def process_data():
                 #Reports
                 #result = qb_client.get_report('TransactionListByTagType')
                 #print(result)
-
+                if len(rows)%10 == 0:
+                    print()
                 print('.', end='')
                 rows.append(sr)
     return rows

@@ -531,7 +531,7 @@ def main():
             #if order.get('id') == 'vJOMD95Etuokh4F2nKfO19mtFOUZY': #unregistered user
             #if order.get('id') == 'J8F6LmRGZHDWS26eDSnGJ2A20mSZY':   #another smith
             #if order.get('id') == 'T1jELiTjKFLhxWKlwMOVRdIos75YY':   #Bob Bethea
-            #if order.get('id') == 'BqOO7vznVYNWqSCGuneY4hRDaGEZY': #mulch
+            #if order.get('id') == 'b5HOXgm7Y0iSv8WGIS6OdqaeY9IZY': #hartz (check after 3/5 to see if deleted)
             if True:
                 logging.info("Processing Order: {}".format(order))
 
