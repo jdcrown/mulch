@@ -135,11 +135,23 @@ def lookup_troop_name(raw_troop_name):
     else:
         return raw_troop_name
 
+def lookup_payer_name(raw_payer_name):
+    if raw_payer_name.lower() == 'undeposited funds':
+        return "T5"
+
+    elif raw_payer_name.lower() == 'other income:t91 funds':
+        return "T9"
+    else:
+        return raw_payer_name
+
 def lookup_spreading_date(item_name):
     item = item_name.split(' ')
     if len(item) > 1 and item[0].lower() == 'spreading':
-        item_dt = parse(item[1])
-        return parse(item[1]).strftime('%m/%d/%Y')
+        try:
+            item_dt = parse(item[1])
+            return parse(item[1]).strftime('%m/%d/%Y')
+        except Exception as ex:
+            logging.error("Stopped on lookup spreading date on item: {}".format(item_name))
 
 def lookup_product(product_name):
     #Get the Item
@@ -206,6 +218,7 @@ class MulchSalesReport:
     donate_total: str = None
 
     payment_method_ref: object = None
+    payment_method_name: str = None
     deposit_account_ref: object = None
     unit_income: str = None
     unit_sale: str = None
@@ -258,7 +271,8 @@ class MulchSalesReport:
             'Mulch\n20-24':'',
             'Mulch\n1-9':'',
             'Total Sales': '',
-            'DateModified': self.date_modified
+            'DateModified': self.date_modified,
+            'PaymentMethod': self.payment_method_name
         }
 
 def get_col_widths(dataframe):
@@ -349,11 +363,11 @@ def process_data():
                     credit = scout_credit.StringValue.split(':')
                     if len(credit) > 1:
 
-                        sr.unit_sale = lookup_troop_name(credit[0].upper())
+                        sr.unit_sale = credit[0].upper()
                         sr.scout_sale = credit[1].strip()
                     elif len(credit) == 1:
                         if re.findall(TROOP_KEYS, credit[0].lower()):
-                            sr.unit_sale = lookup_troop_name(credit[0].upper())
+                            sr.unit_sale = credit[0].upper()
                         else:
                             sr.scout_sale = credit[0].strip()
                     else:
@@ -363,8 +377,9 @@ def process_data():
                     sr.sr_product_memo = receipt.CustomerMemo['value']
                 deposit_account = receipt.DepositToAccountRef
                 if deposit_account is not None:
-                    sr.unit_income = deposit_account.name
+                    sr.unit_income = lookup_payer_name(deposit_account.name)
                 sr.sr_check_no = receipt.PaymentRefNum
+                sr.payment_method_name = receipt.PaymentMethodRef
                 #sales receipt line item
                 qty = r.SalesItemLineDetail['Qty']
                 #sr.sr_product_qty = qty
@@ -389,9 +404,14 @@ def process_data():
                     sr.spread_check_no = sr.sr_check_no
                     sr.spread_sale_no = receipt.DocNumber
                     sr.spread_total = sr.sr_total_price
-                    sr.spread_date = lookup_spreading_date(item.Name)
+
                     if receipt.CustomerMemo is not None:
-                        sr.sr_product_memo = receipt.CustomerMemo['value']
+                        sr.spread_notes = receipt.CustomerMemo['value']
+                    if re.findall('tbd', item.Name.lower()):
+                        sr.spread_notes = "{} : SPREAD DATE TBD".format(sr.spread_notes)
+                    else:
+                        sr.spread_date = lookup_spreading_date(item.Name)
+
                 elif re.findall(DONATION_KEYS,item_name):
                     sr.donate_total = sr.sr_total_price
                     sr.sr_product_memo = ''
@@ -403,7 +423,7 @@ def process_data():
                 #Reports
                 #result = qb_client.get_report('TransactionListByTagType')
                 #print(result)
-                if len(rows)%10 == 0:
+                if len(rows)%20 == 0:
                     print()
                 print('.', end='')
                 rows.append(sr)
